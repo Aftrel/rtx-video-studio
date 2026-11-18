@@ -17,7 +17,7 @@ sealed record ExportQuality(string Id, string EnglishName, string ChineseName, d
     public override string ToString() => Chinese ? $"{Label}（约 {ReferenceMbps} Mbps）" : $"{Label} (~{ReferenceMbps} Mbps)";
 }
 sealed record HdrLook(string Id, int Contrast, int Saturation, int MiddleGray, int PeakNits) {
-    public static readonly HdrLook Gentle = new("gentle",90,95,44,500);
+    public static readonly HdrLook Gentle = new("gentle",90,100,50,500);
     public static readonly HdrLook Classic = new("classic",100,100,50,1000);
     public static readonly HdrLook[] All = [Gentle,Classic];
     public override string ToString() => this==Gentle ? T("Gentle","柔和") : T("Classic","经典");
@@ -213,12 +213,22 @@ static class Engine {
             await Prepare(input,m,o,cwd,rate,length,Log,token);
             var intermediate=await Probe(Path.Combine(cwd,"stage.mp4"),token);
             var video="stage.mp4";
+            bool softenHighlights=o.Hdr && o.Look==HdrLook.Gentle;
+            if(softenHighlights) HighlightShoulder.WriteLut(cwd);
             bool nativeSizeVsr=o.Vsr && width==m.W && height==m.H;
             if(nativeSizeVsr) {
                 // NVEncC skips resize filters at 1:1. Apply RTX VSR explicitly and use its NVENC CQ path.
                 stage=1;update(T("Native-size RTX VSR · ","原尺寸 RTX VSR · ")+o.Quality.Label,.48);
                 video="enhanced.mp4";
-                var args=new List<string>{"stage.mp4",video,o.Hdr?"--vsr-hdr":"--vsr","--legacy","--backend","nvenc",
+                var inputStage="stage.mp4";
+                if(softenHighlights) {
+                    // The native-size VSR worker has no LUT input. Shape the SDR signal before it reads the frames.
+                    inputStage="softened.mp4";
+                    await Run("encode/NVEncC64",["--avhw","-i","stage.mp4","-o",inputStage,"-c","hevc","--preset","P3",
+                        "--cqp","8","--bframes","0","--output-depth","10","--vpp-colorspace",HighlightShoulder.Filter,
+                        "--colormatrix","bt709","--colorprim","bt709","--transfer","bt709"],cwd,Log,token);
+                }
+                var args=new List<string>{inputStage,video,o.Hdr?"--vsr-hdr":"--vsr","--legacy","--backend","nvenc",
                     "--codec","hevc","--quality",F(o.Quality.Cq),"--no-audio","--output-size",$"{width}x{height}",
                     "--vsr-quality","4"};
                 if(o.Hdr) args.AddRange(["--contrast",F(o.Look.Contrast),"--saturation",F(o.Look.Saturation),
@@ -229,6 +239,7 @@ static class Engine {
                 video="enhanced.mp4";
                 var args=new List<string>{"--avhw","-i","stage.mp4","-o",video,"-c","hevc","--preset","P5",
                     "--qvbr",F(o.Quality.Cq),"--max-bitrate","240000","--bframes","0","--sar","1:1"};
+                if(softenHighlights) args.AddRange(["--vpp-colorspace",HighlightShoulder.Filter]);
                 if(o.Vsr) args.AddRange(["--output-res",$"{width}x{height}","--vpp-resize","algo=ngx-vsr,vsr-quality=4"]);
                 if(o.Hdr) {
                     var look=o.Look;
