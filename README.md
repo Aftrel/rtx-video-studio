@@ -12,7 +12,7 @@ Turn SDR footage into a 4K HDR10 MP4 at twice the source frame rate. You can ena
 
 ## HDR look
 
-**Gentle** (default) rolls off bright SDR tones before RTX HDR expands them, with a 500-nit peak target. The curve preserves RGB ratios and keeps a positive slope at white so nearby bright tones stay distinguishable. At native-size VSR, Gentle uses an additional GPU pass to apply the curve. **Classic** preserves the original 1,000-nit mapping. To compare, choose the same preview start time and export once with each look. On the command line, use `--hdr-look gentle` or `--hdr-look classic`.
+**Gentle** (default) rolls off bright SDR tones before RTX HDR expands them, with a 500-nit peak target. Near white, the curve gives closely spaced tones more separation, so textures such as ripples on bright water remain visible. It preserves linear RGB ratios. At native-size VSR, Gentle uses an additional GPU pass to apply the curve. **Classic** preserves the original 1,000-nit mapping. To compare, choose the same preview start time and export once with each look. On the command line, use `--hdr-look gentle` or `--hdr-look classic`.
 
 ## Export quality
 

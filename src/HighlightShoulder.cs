@@ -22,8 +22,14 @@ static class HighlightShoulder {
             double gain=1;
             if(y>knee) {
                 double delta=y-knee;
-                // Unit slope at the knee and a positive slope at white preserve highlight separation.
                 double mapped=knee+delta*(residualSlope+(1-residualSlope)/(1+delta/shoulderWidth));
+                // Give near-white gradients more slope. Ease in a small offset
+                // below them so diffuse white stays close to its original level.
+                double fade=Math.Clamp((y-0.38)/0.43,0,1);
+                fade=fade*fade*(3-2*fade);
+                double distance=y-0.95;
+                double softRamp=0.5*(distance+Math.Sqrt(distance*distance+0.014*0.014));
+                mapped+=fade*(0.62*softRamp-0.015);
                 gain=Math.Pow(mapped/y,1/2.4);
             }
             // A shared gain preserves linear RGB ratios, including on near-neutral colors.

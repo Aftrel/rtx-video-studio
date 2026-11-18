@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>RTX Video Studio</AssemblyName>
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
   <ItemGroup><Compile Include="Engine.cs"/><Compile Include="Studio.cs"/><Compile Include="Language.cs"/><Compile Include="HighlightShoulder.cs"/></ItemGroup>
