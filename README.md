@@ -8,11 +8,11 @@ Turn SDR footage into a 4K HDR10 MP4 at twice the source frame rate. You can ena
 
 1. Download the Windows x64 ZIP from the release page and extract the entire folder.
 2. Install the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/download/dotnet/10.0). Double-click `Install-Runtime.cmd` to download about 1 GB of dependencies. The installer verifies each download with SHA-256.
-3. Open `RTX Video Studio.exe`, drag a video into the window, and select the effects you want. The interface is in Chinese. Choose **生成 5 秒预览** for a five-second preview or **处理完整视频** to export the full video. By default, the app saves the result next to the input and adds a number if the filename is already in use.
+3. Open `RTX Video Studio.exe`, drag a video into the window, and select the effects you want. The app starts in Simplified Chinese on Chinese-language Windows installations and in English elsewhere. Use the language selector at the top right to switch at any time between jobs. The app remembers your choice. Choose **Preview 5 seconds** or **Export full video**. By default, the app saves the result next to the input and adds a number if the filename is already in use.
 
 ## Export quality
 
-The **导出质量** menu controls HEVC compression. Efficient (高效), Standard (标准, default), and High (高质量) correspond to roughly **20, 40, and 80 Mbps** of video for the 4K60 HDR calibration clip. NVENC uses target-quality VBR (CQ) and varies the bitrate with the footage. Other resolutions and frame rates can produce substantially different rates. The app displays the measured video bitrate after export.
+The **Export quality** menu controls HEVC compression. Efficient (高效), Standard (标准, default), and High (高质量) correspond to roughly **20, 40, and 80 Mbps** of video for the 4K60 HDR calibration clip. NVENC uses target-quality VBR (CQ) and varies the bitrate with the footage. Other resolutions and frame rates can produce substantially different rates. The app displays the measured video bitrate after export.
 
 Use `--quality efficient`, `--quality standard`, or `--quality high` on the command line. Previews and full exports use the same setting.
 
@@ -23,7 +23,7 @@ Use `--quality efficient`, `--quality standard`, or `--quality high` on the comm
 | Lossless Scaling (LSFG) | Uses your local Steam installation of Lossless Scaling. Tested with version 3.2.2. This is the default engine. |
 | NVIDIA Maxine VFG | Uses High quality mode with 2× frame interpolation and automatic scene-cut detection. Supports Ada and Blackwell GPUs. |
 
-For eligible 8-bit, limited-range BT.709 inputs with a constant frame rate, NVIDIA VFG uses NVDEC to decode, keeps frames in GPU memory during interpolation, and encodes with NVENC. The status line shows **显存直通** when this path is active. Other supported inputs use the compatibility path.
+For eligible 8-bit, limited-range BT.709 inputs with a constant frame rate, NVIDIA VFG uses NVDEC to decode, keeps frames in GPU memory during interpolation, and encodes with NVENC. The status line shows **GPU-memory path** when this path is active. Other supported inputs use the compatibility path.
 
 ## Input and output
 

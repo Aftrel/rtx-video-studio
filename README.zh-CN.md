@@ -8,7 +8,7 @@
 
 1. 从 [GitHub Releases](https://github.com/Aftrel/rtx-video-studio/releases/latest) 下载 Windows x64 压缩包，将整个文件夹解压到本地。
 2. 安装 [Microsoft .NET 10 桌面运行时（Windows x64）](https://dotnet.microsoft.com/download/dotnet/10.0)，然后双击 `Install-Runtime.cmd`。首次设置需要联网下载约 1 GB 的第三方组件；脚本会核对 SHA-256。
-3. 打开 `RTX Video Studio.exe`，拖入视频，选择需要的效果，点「生成 5 秒预览」或「处理完整视频」。成片默认保存在原片旁边，重名时自动编号。
+3. 打开 `RTX Video Studio.exe`。首次启动跟随 Windows 显示语言，中文系统默认简体中文，其他系统默认英文。可以在右上角切换语言，选择会自动保存。拖入视频，选择需要的效果，点「生成 5 秒预览」或「处理完整视频」。成片默认保存在原片旁边，重名时自动编号。
 
 ## 导出质量
 
