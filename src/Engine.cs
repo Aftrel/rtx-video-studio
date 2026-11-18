@@ -16,7 +16,13 @@ sealed record ExportQuality(string Id, string EnglishName, string ChineseName, d
     public string Label => T(EnglishName,ChineseName);
     public override string ToString() => Chinese ? $"{Label}（约 {ReferenceMbps} Mbps）" : $"{Label} (~{ReferenceMbps} Mbps)";
 }
-record Options(bool Vsr, bool Hdr, bool Fg, bool Preview, double Start, bool Nvidia, ExportQuality Quality);
+sealed record HdrLook(string Id, int Contrast, int Saturation, int MiddleGray, int PeakNits) {
+    public static readonly HdrLook Gentle = new("gentle",90,95,44,500);
+    public static readonly HdrLook Classic = new("classic",100,100,50,1000);
+    public static readonly HdrLook[] All = [Gentle,Classic];
+    public override string ToString() => this==Gentle ? T("Gentle","柔和") : T("Classic","经典");
+}
+record Options(bool Vsr, bool Hdr, bool Fg, bool Preview, double Start, bool Nvidia, ExportQuality Quality, HdrLook Look);
 record Media(int W, int H, string Rate, double Fps, double Duration, string Transfer, string Primaries,
              string Matrix, string Pixel, string Audio, string Sar, int Rotation, long Frames, double AudioOffset,
              string Range, double VideoMbps);
@@ -185,7 +191,8 @@ static class Engine {
         var scale=o.Vsr?Math.Min(3840.0/m.W,2160.0/m.H):1;
         var width=(int)Math.Round(m.W*scale/2)*2; var height=(int)Math.Round(m.H*scale/2)*2;
         if(o.Vsr && scale<1) throw new ArgumentException(T("This video exceeds 4K. Turn off upscaling.","输入已超过 4K 范围，请关闭超分。"));
-        var label=(o.Preview?T("_preview","_预览"):"")+$"_{width}x{height}_{F(Math.Round(fps,3))}fps"+(o.Hdr?"_HDR10":"")+(o.Fg?(o.Nvidia?"_VFG":"_LSFG"):"");
+        var hdrLabel=o.Hdr ? (o.Look==HdrLook.Gentle?"_HDR10-Gentle":"_HDR10") : "";
+        var label=(o.Preview?T("_preview","_预览"):"")+$"_{width}x{height}_{F(Math.Round(fps,3))}fps"+hdrLabel+(o.Fg?(o.Nvidia?"_VFG":"_LSFG"):"");
         Directory.CreateDirectory(destination);
         var cwd=Directory.CreateDirectory(Path.Combine(destination,".rtx-"+Guid.NewGuid().ToString("N"))).FullName;
         var logPath=Path.Combine(cwd,"job.log");
@@ -211,18 +218,26 @@ static class Engine {
                 // NVEncC skips resize filters at 1:1. Apply RTX VSR explicitly and use its NVENC CQ path.
                 stage=1;update(T("Native-size RTX VSR · ","原尺寸 RTX VSR · ")+o.Quality.Label,.48);
                 video="enhanced.mp4";
-                await Run("sdr2hdr_cli",["stage.mp4",video,o.Hdr?"--vsr-hdr":"--vsr","--legacy","--backend","nvenc",
+                var args=new List<string>{"stage.mp4",video,o.Hdr?"--vsr-hdr":"--vsr","--legacy","--backend","nvenc",
                     "--codec","hevc","--quality",F(o.Quality.Cq),"--no-audio","--output-size",$"{width}x{height}",
-                    "--vsr-quality","4","--max-lum","1000"],cwd,Log,token);
+                    "--vsr-quality","4"};
+                if(o.Hdr) args.AddRange(["--contrast",F(o.Look.Contrast),"--saturation",F(o.Look.Saturation),
+                    "--middle-grey",F(o.Look.MiddleGray),"--max-lum",F(o.Look.PeakNits)]);
+                await Run("sdr2hdr_cli",args,cwd,Log,token);
             } else if(o.Hdr || o.Vsr) {
                 stage=1;update(T("Encoding · ","正在编码 · ")+o.Quality.Label,.48);
                 video="enhanced.mp4";
                 var args=new List<string>{"--avhw","-i","stage.mp4","-o",video,"-c","hevc","--preset","P5",
                     "--qvbr",F(o.Quality.Cq),"--max-bitrate","240000","--bframes","0","--sar","1:1"};
                 if(o.Vsr) args.AddRange(["--output-res",$"{width}x{height}","--vpp-resize","algo=ngx-vsr,vsr-quality=4"]);
-                if(o.Hdr) args.AddRange(["--vpp-ngx-truehdr","contrast=100,saturation=100,middlegray=50,maxluminance=1000",
+                if(o.Hdr) {
+                    var look=o.Look;
+                    args.AddRange(["--vpp-ngx-truehdr",$"contrast={look.Contrast},saturation={look.Saturation},middlegray={look.MiddleGray},maxluminance={look.PeakNits}",
                     "--output-depth","10","--colormatrix","bt2020nc","--colorprim","bt2020","--transfer","smpte2084",
-                    "--master-display","G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50)","--max-cll","1000,500"]);
+                    "--master-display",$"G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L({look.PeakNits*10000},50)"]);
+                    // Preserve the historical Classic metadata. Gentle has no measured per-title MaxCLL/MaxFALL.
+                    if(look==HdrLook.Classic) args.AddRange(["--max-cll","1000,500"]);
+                }
                 else args.AddRange(["--colormatrix","bt709","--colorprim","bt709","--transfer","bt709"]);
                 await Run("encode/NVEncC64",args,cwd,Log,token);
             }

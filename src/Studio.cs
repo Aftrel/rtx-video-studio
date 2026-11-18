@@ -17,7 +17,11 @@ static class Program {
                 var quality=q<0 ? ExportQuality.Standard : ExportQuality.All.FirstOrDefault(p=>
                     string.Equals(p.Id,opts.ElementAtOrDefault(q+1),StringComparison.OrdinalIgnoreCase))
                     ?? throw new ArgumentException(T("--quality requires efficient, standard or high.","--quality 的可选值为 efficient、standard、high。"));
-                var options=new Options(!opts.Contains("--no-vsr"),!opts.Contains("--no-hdr"),!opts.Contains("--no-fg"),offset>=0,start,opts.Contains("--nvidia-vfg"),quality);
+                var h=Array.IndexOf(opts,"--hdr-look");
+                var look=h<0 ? HdrLook.Gentle : HdrLook.All.FirstOrDefault(p=>
+                    string.Equals(p.Id,opts.ElementAtOrDefault(h+1),StringComparison.OrdinalIgnoreCase))
+                    ?? throw new ArgumentException(T("--hdr-look requires gentle or classic.","--hdr-look 的可选值为 gentle、classic。"));
+                var options=new Options(!opts.Contains("--no-vsr"),!opts.Contains("--no-hdr"),!opts.Contains("--no-fg"),offset>=0,start,opts.Contains("--nvidia-vfg"),quality,look);
                 var result=Engine.Render(Path.GetFullPath(args[1]),Path.GetFullPath(args[2]),options,
                     (message,n)=>Console.WriteLine($"{n:P0} {message}"),CancellationToken.None).GetAwaiter().GetResult();
                 Console.WriteLine(result.Path);return 0;
@@ -36,6 +40,8 @@ sealed class StudioForm : Form {
     readonly CheckBox fg=new(){Checked=true,AutoSize=true};
     readonly ComboBox method=new(){DropDownStyle=ComboBoxStyle.DropDownList,Width=167};
     readonly ComboBox quality=new(){DropDownStyle=ComboBoxStyle.DropDownList};
+    readonly ComboBox hdrLook=new(){DropDownStyle=ComboBoxStyle.DropDownList};
+    readonly Label lookLabel=new(){AutoSize=true},lookHint=new(){AutoSize=true,ForeColor=Color.DimGray};
     readonly NumericUpDown seconds=new(){Maximum=86400,Width=86};
     readonly ProgressBar progress=new(){Dock=DockStyle.Fill,Maximum=1000};
     readonly Button choose=new(),location=new(),
@@ -57,19 +63,19 @@ sealed class StudioForm : Form {
         AutoScaleMode=AutoScaleMode.None;StartPosition=FormStartPosition.CenterScreen;
         ClientSize=new Size(700,488);MinimumSize=new Size(640,490);
         BackColor=Color.FromArgb(247,248,250);AllowDrop=true;
-        var layout=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(22,16,22,16),ColumnCount=2,RowCount=11};
+        var layout=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(22,16,22,16),ColumnCount=2,RowCount=12};
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,110));
-        foreach(var h in new[]{40,32,26,38,40,42,34,40,50,22,34})layout.RowStyles.Add(new RowStyle(SizeType.Absolute,h));
+        foreach(var h in new[]{40,32,26,38,40,40,42,34,40,50,22,34})layout.RowStyles.Add(new RowStyle(SizeType.Absolute,h));
         Controls.Add(layout);
         void FitDpi() {
             int Px(int logical) => (int)Math.Round(logical*DeviceDpi/96.0);
-            MinimumSize = new Size(Px(810),Px(532));
-            ClientSize = new Size(Px(850),Px(492));
+            MinimumSize = new Size(Px(810),Px(572));
+            ClientSize = new Size(Px(850),Px(532));
             layout.Padding = new Padding(Px(22),Px(16),Px(22),Px(16));
             layout.ColumnStyles[1].Width=Px(150);
-            int[] heights=[43,38,30,47,40,35,40,45,48,20,39];
+            int[] heights=[43,38,30,47,40,40,35,40,45,48,20,39];
             for(int i=0;i<heights.Length;i++) layout.RowStyles[i].Height=Px(heights[i]);
-            method.Width=Px(180);quality.Width=Px(195);seconds.Width=Px(80);
+            method.Width=Px(180);quality.Width=hdrLook.Width=Px(195);seconds.Width=Px(80);
             foreach(var panel in layout.Controls.OfType<FlowLayoutPanel>())
                 foreach(Control child in panel.Controls) child.Margin=new Padding(0,Px(4),Px(13),0);
             foreach(var b in new[]{choose,location,test,render,open,cancel}) b.MinimumSize=new Size(Px(65),Px(28));
@@ -91,14 +97,17 @@ sealed class StudioForm : Form {
 
         fg.CheckedChanged+=(_,_)=>method.Enabled=fg.Checked;
         Row(Flow(vsr,hdr,fg,method),3);
-        qualityLabel.Padding=qualityHint.Padding=previewLabel.Padding=new Padding(0,4,0,0);
+        lookLabel.Padding=lookHint.Padding=qualityLabel.Padding=qualityHint.Padding=previewLabel.Padding=new Padding(0,4,0,0);
         qualityHint.ForeColor=Color.DimGray;
-        Row(Flow(qualityLabel,quality,qualityHint),4);
-        target.ForeColor=Color.FromArgb(0,86,102);Row(target,5);
-        Row(folder,6,1);layout.Controls.Add(location,1,6);
-        Row(Flow(previewLabel,seconds,test),7);
+        Row(Flow(lookLabel,hdrLook,lookHint),4);
+        hdrLook.SelectedIndexChanged+=(_,_)=>RefreshLook();
+        hdr.CheckedChanged+=(_,_)=>RefreshLook();
+        Row(Flow(qualityLabel,quality,qualityHint),5);
+        target.ForeColor=Color.FromArgb(0,86,102);Row(target,6);
+        Row(folder,7,1);layout.Controls.Add(location,1,7);
+        Row(Flow(previewLabel,seconds,test),8);
         foreach(var b in new[]{choose,location,test,render,open,cancel}){b.AutoSize=true;b.Height=30;b.FlatStyle=FlatStyle.System;}
-        Row(Flow(render,cancel,open),8);Row(progress,9);Row(status,10);
+        Row(Flow(render,cancel,open),9);Row(progress,10);Row(status,11);
         choose.Click+=async (_,_)=>{using var d=new OpenFileDialog{Title=T("Choose a video","选择视频"),Filter=T("Video","视频")+"|*.mp4;*.mkv;*.mov;*.m4v;*.avi;*.webm;*.ts|"+T("All files","所有文件")+"|*.*"};if(d.ShowDialog()==DialogResult.OK)await SelectFile(d.FileName);};
         location.Click+=(_,_)=>{using var d=new FolderBrowserDialog{InitialDirectory=outputDir??(input==null?"":Path.GetDirectoryName(input)??"")};if(d.ShowDialog()==DialogResult.OK){outputDir=d.SelectedPath;folder.Text=outputDir;}};
         foreach(var c in new[]{vsr,hdr,fg})c.CheckedChanged+=(_,_)=>RefreshTarget();
@@ -127,6 +136,9 @@ sealed class StudioForm : Form {
         cancel.Text=T("Cancel","取消");open.Text=T("Open output","打开成片");
         vsr.Text=T("RTX VSR to 4K","RTX VSR 超分至 4K");fg.Text=T("2× interpolation","2 倍插帧");
         previewLabel.Text=T("Preview start (s)","预览起点（秒）");
+        hdrLook.AccessibleName=lookLabel.Text=T("HDR look","HDR 风格");
+        var selectedLook=hdrLook.SelectedItem??HdrLook.Gentle;
+        hdrLook.Items.Clear();hdrLook.Items.AddRange(HdrLook.All);hdrLook.SelectedItem=selectedLook;
         quality.AccessibleName=qualityLabel.Text=T("Export quality","导出质量");
         qualityHint.Text=T("4K60 estimates. Bitrate varies with footage.","4K60 参考码率，实际随画面变化");
         method.AccessibleName=T("Interpolation engine","插帧引擎");
@@ -143,6 +155,12 @@ sealed class StudioForm : Form {
     }
     void ShowMedia(Media m) {
         details.Text=$"{m.W} × {m.H}   ·   {m.Fps:0.###} fps   ·   {m.Duration:0.##} {T("s","秒")}   ·   {m.Transfer}";
+    }
+    void RefreshLook() {
+        hdrLook.Enabled=hdr.Checked && running==null;
+        lookHint.Text=!hdr.Checked ? "" : Equals(hdrLook.SelectedItem,HdrLook.Classic)
+            ? T("Original RTX mapping · 1,000-nit target","原版 RTX 映射 · 目标 1000 尼特")
+            : T("Softer highlights · 500-nit target","柔化浅色和高光 · 目标 500 尼特");
     }
     async Task SelectFile(string path) {
         int revision=++selection;selectedPath=path;lastStatus=null;media=null;input=null;outputFile=null;open.Enabled=false;
@@ -166,8 +184,8 @@ sealed class StudioForm : Form {
     async Task ProcessVideo(bool preview) {
         if(input==null || running!=null)return;
         using var job=new CancellationTokenSource();running=job;
-        var o=new Options(vsr.Checked,hdr.Checked,fg.Checked,preview,(double)seconds.Value,method.SelectedIndex==1,(ExportQuality)quality.SelectedItem!);
-        foreach(var c in new Control[]{choose,location,vsr,hdr,fg,method,quality,language,seconds,test,render,open})c.Enabled=false;
+        var o=new Options(vsr.Checked,hdr.Checked,fg.Checked,preview,(double)seconds.Value,method.SelectedIndex==1,(ExportQuality)quality.SelectedItem!,(HdrLook)hdrLook.SelectedItem!);
+        foreach(var c in new Control[]{choose,location,vsr,hdr,hdrLook,fg,method,quality,language,seconds,test,render,open})c.Enabled=false;
         outputFile=null;cancel.Enabled=true;progress.Value=0;
         var updates=new Progress<(string Text,double Part)>(v=>{if(running==job && !job.IsCancellationRequested){status.Text=v.Text;progress.Value=Math.Clamp((int)(1000*v.Part),0,1000);}});
         try {
@@ -178,7 +196,7 @@ sealed class StudioForm : Form {
         finally {
             running=null;cancel.Enabled=false;
             foreach(var c in new Control[]{choose,location,vsr,hdr,fg,quality,language,seconds})c.Enabled=true;
-            method.Enabled=fg.Checked;RefreshTarget();if(closeWhenDone)Close();
+            method.Enabled=fg.Checked;RefreshLook();RefreshTarget();if(closeWhenDone)Close();
         }
     }
 }

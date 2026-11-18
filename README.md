@@ -10,6 +10,10 @@ Turn SDR footage into a 4K HDR10 MP4 at twice the source frame rate. You can ena
 2. Install the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/download/dotnet/10.0). Double-click `Install-Runtime.cmd` to download about 1 GB of dependencies. The installer verifies each download with SHA-256.
 3. Open `RTX Video Studio.exe`, drag a video into the window, and select the effects you want. The app starts in Simplified Chinese on Chinese-language Windows installations and in English elsewhere. Use the language selector at the top right to switch at any time between jobs. The app remembers your choice. Choose **Preview 5 seconds** or **Export full video**. By default, the app saves the result next to the input and adds a number if the filename is already in use.
 
+## HDR look
+
+**Gentle** (default) uses a 500-nit peak target with lower contrast and middle gray to soften light-colored areas. **Classic** preserves the original 1,000-nit mapping. To compare, choose the same preview start time and export once with each look. On the command line, use `--hdr-look gentle` or `--hdr-look classic`.
+
 ## Export quality
 
 The **Export quality** menu controls HEVC compression. Efficient (高效), Standard (标准, default), and High (高质量) correspond to roughly **20, 40, and 80 Mbps** of video for the 4K60 HDR calibration clip. NVENC uses target-quality VBR (CQ) and varies the bitrate with the footage. Other resolutions and frame rates can produce substantially different rates. The app displays the measured video bitrate after export.
@@ -27,7 +31,7 @@ For eligible 8-bit, limited-range BT.709 inputs with a constant frame rate, NVID
 
 ## Input and output
 
-- **Video** — Accepts SDR inputs with even dimensions, square pixels, and no rotation metadata. Upscaling preserves the aspect ratio and fits the image within 3840 × 2160. TrueHDR targets 1,000 nits and writes 10-bit HEVC with BT.2020 primaries and the PQ transfer function.
+- **Video** — Accepts SDR inputs with even dimensions, square pixels, and no rotation metadata. Upscaling preserves the aspect ratio and fits the image within 3840 × 2160. TrueHDR writes 10-bit HEVC with BT.2020 primaries and the PQ transfer function.
 - **Tracks** — Exports the first main video stream and the first audio track. Full exports copy compatible AAC audio. Previews and other supported audio formats are encoded as AAC. Allow disk space for intermediate video files.
 - **Tested export** — On Windows x64 with a GeForce RTX 5070 Ti and driver 621.24, a 129.5-second 1080p30 clip produced 7,770 frames of 2160p60 HDR10 video. The exported AAC stream matched the source audio hash.
 

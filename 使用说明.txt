@@ -7,7 +7,7 @@ RTX Video Studio · Windows x64
 导出质量有高效、标准（默认）、高质量三档，4K60 HDR 参考平均码率约为 20、40、80 Mbps。NVENC 使用目标质量（CQ），实际码率随内容变化。完成后状态栏会显示测得的视频码率。命令行使用 --quality efficient、standard 或 high。
 输出文件名带有尺寸、帧率、HDR 状态和引擎名称。重名时自动编号。
 
-超分使用 NVIDIA RTX VSR，保持宽高比放入 3840×2160。HDR 使用 RTX TrueHDR，目标峰值 1000 尼特，HEVC Main 10、BT.2020、PQ。插帧在超分和 HDR 之前执行，也可单独使用。
+超分使用 NVIDIA RTX VSR，保持宽高比放入 3840×2160。HDR 使用 RTX TrueHDR。默认「柔和」的峰值目标为 500 尼特；「经典」保留原版 1000 尼特映射。命令行可用 --hdr-look gentle 或 --hdr-look classic。HDR 成片为 HEVC Main 10、BT.2020、PQ。插帧在超分和 HDR 之前执行，也可单独使用。
 Lossless Scaling · LSFG 读取本机 Steam 安装的 Lossless.dll。已实测 Lossless Scaling 3.2.2。
 NVIDIA VFG · 高质量使用 NVIDIA Maxine Video Frame Generation 的 High 模式、双倍帧率、自动切镜检测。此模式可独立于 Lossless Scaling 运行。
 整片优先直通第一条 AAC 音轨。预览和其他受支持的音轨会重新编码为 AAC。此版本仅导出第一条主视频和第一条音轨。可变帧率视频会转为恒定帧率。
