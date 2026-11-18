@@ -20,4 +20,4 @@ NVIDIA VFG · 高质量使用 NVIDIA Maxine Video Frame Generation 的 High 模�
 --nvidia-vfg 选择 NVIDIA VFG，否则使用 LSFG。--preview 20 从第 20 秒生成预览。
 --no-vsr、--no-hdr、--no-fg 分别关闭一种处理效果。
 
-显存直通支持常见 4:2:0 恒定帧率视频，包括 8/10 位 BT.709 SDR、全范围或 BT.601 矩阵 SDR，以及 10 位有限范围 BT.2020 的 PQ 和 HLG。其余受支持的片源会自动走兼容模式。
+显存直通支持常见 4:2:0 恒定帧率视频，包括 8/10 位 BT.709 SDR、全范围或 BT.601 矩阵 SDR，以及 10 位全范围或有限范围 BT.2020 的 PQ 和 HLG。其余受支持的片源会自动走兼容模式。

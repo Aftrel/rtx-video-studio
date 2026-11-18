@@ -27,7 +27,7 @@ Use `--quality efficient`, `--quality standard`, or `--quality high` on the comm
 | Lossless Scaling (LSFG) | Uses your local Steam installation of Lossless Scaling. Tested with version 3.2.2. This is the default engine. |
 | NVIDIA Maxine VFG | Uses High quality mode with 2× frame interpolation and automatic scene-cut detection. Supports Ada and Blackwell GPUs. |
 
-Both engines can keep decoded frames in GPU memory through interpolation and NVENC encoding. Eligible constant-frame-rate 4:2:0 inputs include 8- and 10-bit BT.709 SDR, full-range SDR, BT.601 matrix SDR, and 10-bit limited-range BT.2020 PQ or HLG. Full-range and BT.601 matrix conversion runs on the GPU. Untagged SDR uses BT.601 up to 576 lines and BT.709 above that. The status line shows **GPU-memory path** or **compatibility mode**. Other primaries, pixel formats and irregular timestamps may require conversion before interpolation. The supported codec profiles depend on the GPU.
+Both engines can keep decoded frames in GPU memory through interpolation and NVENC encoding. Eligible constant-frame-rate 4:2:0 inputs include 8- and 10-bit BT.709 SDR, full-range SDR, BT.601 matrix SDR, and 10-bit BT.2020 PQ or HLG in either full or limited range. Full-range HDR is mapped directly to limited-range 10-bit samples on the GPU, preserving the transfer function and avoiding an intermediate encode. BT.601 matrix conversion also runs on the GPU. Untagged SDR uses BT.601 up to 576 lines and BT.709 above that. The status line shows **GPU-memory path** or **compatibility mode**. Other primaries, pixel formats and irregular timestamps may require conversion before interpolation. The supported codec profiles depend on the GPU.
 
 ## Input and output
 

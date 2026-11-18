@@ -50,7 +50,8 @@ static Colour inputColour(const AVCodecParameters& p){
     bool full=p.color_range==AVCOL_RANGE_JPEG || p.format==AV_PIX_FMT_YUVJ420P;
     if(!ten && p.format!=AV_PIX_FMT_YUV420P && p.format!=AV_PIX_FMT_YUVJ420P && p.format!=AV_PIX_FMT_NV12)
         throw std::runtime_error("Unsupported chroma format or bit depth");
-    if(hdr && (!ten || full || p.color_space!=AVCOL_SPC_BT2020_NCL || p.color_primaries!=AVCOL_PRI_BT2020))
+    if(hdr && (!ten || (p.color_range!=AVCOL_RANGE_MPEG && p.color_range!=AVCOL_RANGE_JPEG) ||
+               p.color_space!=AVCOL_SPC_BT2020_NCL || p.color_primaries!=AVCOL_PRI_BT2020))
         throw std::runtime_error("HDR input requires normalization");
     if(!hdr && ((p.color_primaries!=AVCOL_PRI_UNSPECIFIED && p.color_primaries!=AVCOL_PRI_BT709) ||
         (p.color_space!=AVCOL_SPC_UNSPECIFIED && p.color_space!=AVCOL_SPC_BT709 && !sd) ||
@@ -58,23 +59,23 @@ static Colour inputColour(const AVCodecParameters& p){
         throw std::runtime_error("SDR input requires colour management");
     return {ten,hdr,full,sd,p.chroma_location==AVCHROMA_LOC_TOPLEFT,hdr?p.color_trc:AVCOL_TRC_BT709};
 }
-class SdrNormalizer {
+class YuvNormalizer {
     CUmodule module{};
     CUfunction convert{};
 public:
-    ~SdrNormalizer(){if(module)cuModuleUnload(module);}
+    ~YuvNormalizer(){if(module)cuModuleUnload(module);}
     void open(const std::filesystem::path& ptx){
         std::ifstream file(ptx,std::ios::binary);
         if(!file)throw std::runtime_error("Colour kernel missing");
         std::string code{std::istreambuf_iterator<char>(file),{}};
-        cuok(cuModuleLoadData(&module,code.c_str()),"load SDR normalization");
-        cuok(cuModuleGetFunction(&convert,module,"normalizeSDR"),"find SDR normalization");
+        cuok(cuModuleLoadData(&module,code.c_str()),"load YUV normalization");
+        cuok(cuModuleGetFunction(&convert,module,"normalizeYUV"),"find YUV normalization");
     }
     void run(AVFrame& src,AVFrame& dst,const Colour& colour,CUstream stream){
         int full=colour.full,sd=colour.sd,ten=colour.ten,top=colour.top;
         void* args[]={&src.data[0],&src.linesize[0],&src.data[1],&src.linesize[1],
             &dst.data[0],&dst.linesize[0],&dst.data[1],&dst.linesize[1],&src.width,&src.height,&full,&sd,&ten,&top};
-        cuok(cuLaunchKernel(convert,(src.width+15)/16,(src.height+15)/16,1,16,16,1,0,stream,args,nullptr),"normalize SDR");
+        cuok(cuLaunchKernel(convert,(src.width+15)/16,(src.height+15)/16,1,16,16,1,0,stream,args,nullptr),"normalize YUV");
         cuok(cuStreamSynchronize(stream),"normalized frame ready");
     }
 };
@@ -162,7 +163,7 @@ static int renderGpu(const char* engine,Factory makeInterpolator,const std::file
     const int w=dec->width,h=dec->height;
     if(w<64||h<64||(w|h)%2)throw std::runtime_error("Unsupported dimensions");
     const Colour colour=inputColour(*s->codecpar);
-    SdrNormalizer normalizer;if(colour.normalize())normalizer.open(ptx);
+    YuvNormalizer normalizer;if(colour.normalize())normalizer.open(ptx);
     Buffer frames(av_hwframe_ctx_alloc(dev));if(!frames)throw std::bad_alloc();auto* hw=reinterpret_cast<AVHWFramesContext*>(frames->data);
     hw->format=AV_PIX_FMT_CUDA;hw->sw_format=colour.storage();hw->width=w;hw->height=h;hw->initial_pool_size=8;
     avok(av_hwframe_ctx_init(frames.get()),"encoder surface pool");

@@ -39,36 +39,49 @@ extern "C" __global__ void pack709(const byte* rgba,int rs,byte* yp,int ys,byte*
     uv[(y/2)*us+x+1]=sample8(128.f+cr*(224.f/255.f));
 }
 
-// Normalize noncanonical SDR on-device before feeding the existing BT.709 pipeline.
+// Read and write 8-bit NV12 or P010 in units of one 8-bit code value.
 // Chroma stays on its original grid. Luma needs the chroma at each luma position.
-__device__ float readSDR(const byte* plane,int stride,int x,int y,int ten){
+__device__ float readYuv(const byte* plane,int stride,int x,int y,int ten){
     return ten?((const unsigned short*)(plane+y*stride))[x]/256.f:plane[y*stride+x];
 }
-__device__ void writeSDR(byte* plane,int stride,int x,int y,float level,int ten){
+__device__ void writeYuv(byte* plane,int stride,int x,int y,float level,int ten){
     if(ten)((unsigned short*)(plane+y*stride))[x]=__float2uint_rn(fminf(1023.f,fmaxf(0.f,level*4)))<<6;
     else plane[y*stride+x]=sample8(level);
 }
 __device__ float interpUV(const byte* uv,int stride,int x,int y,int w,int h,int k,int ten,int top) {
     float fx=x*.5f,fy=fmaxf(0.f,y*.5f-(top?0.f:.25f));
     int i=(int)fx,j=(int)fy,ii=min(i+1,w/2-1),jj=min(j+1,h/2-1);
-    return mix2(mix2(readSDR(uv,stride,2*i+k,j,ten),readSDR(uv,stride,2*ii+k,j,ten),fx-i),
-                mix2(readSDR(uv,stride,2*i+k,jj,ten),readSDR(uv,stride,2*ii+k,jj,ten),fx-i),fy-j);
+    return mix2(mix2(readYuv(uv,stride,2*i+k,j,ten),readYuv(uv,stride,2*ii+k,j,ten),fx-i),
+                mix2(readYuv(uv,stride,2*i+k,jj,ten),readYuv(uv,stride,2*ii+k,jj,ten),fx-i),fy-j);
 }
-extern "C" __global__ void normalizeSDR(const byte* y,int ys,const byte* uv,int us,byte* yo,int os,byte* uvo,int cs,int w,int h,int full,int sd,int ten,int top) {
+extern "C" __global__ void normalizeYUV(const byte* y,int ys,const byte* uv,int us,byte* yo,int os,byte* uvo,int cs,int w,int h,int full,int sd,int ten,int top) {
     int x=blockIdx.x*blockDim.x+threadIdx.x,j=blockIdx.y*blockDim.y+threadIdx.y;
     if(x>=w||j>=h)return;
-    float kr=sd?.299f:.2126f,kb=sd?.114f:.0722f,kg=1.f-kr-kb;
-    float peak=ten?255.75f:255.f,chroma=full?peak:224.f;
+    float peak=ten?255.75f:255.f;
+    // With an unchanged matrix only the range needs conversion. Map each sample
+    // on its own grid, preserving PQ/HLG codes and chroma siting.
+    if(!sd){
+        float luma=readYuv(y,ys,x,j,ten);
+        writeYuv(yo,os,x,j,16.f+luma*(219.f/peak),ten);
+        if(j<h/2){
+            float c=readYuv(uv,us,x,j,ten);
+            writeYuv(uvo,cs,x,j,128.f+(c-128.f)*(224.f/peak),ten);
+        }
+        return;
+    }
+    // Convert BT.601 SDR to limited-range BT.709.
+    const float kr=.299f,kb=.114f,kg=1.f-kr-kb;
+    float chroma=full?peak:224.f;
     float red=2*(1-kr),blue=2*(1-kb);
     float deltaU=(.0722f-.7152f*kb/kg)*blue,deltaV=(.2126f-.7152f*kr/kg)*red;
     float u=(interpUV(uv,us,x,j,w,h,0,ten,top)-128)/chroma,v=(interpUV(uv,us,x,j,w,h,1,ten,top)-128)/chroma;
-    float l=(readSDR(y,ys,x,j,ten)-(full?0:16))/(full?peak:219);
-    writeSDR(yo,os,x,j,16+219*(l+deltaU*u+deltaV*v),ten);
+    float l=(readYuv(y,ys,x,j,ten)-(full?0:16))/(full?peak:219);
+    writeYuv(yo,os,x,j,16+219*(l+deltaU*u+deltaV*v),ten);
     if(!(j%2) && !(x%2)){
-        u=(readSDR(uv,us,x,j/2,ten)-128)/chroma;v=(readSDR(uv,us,x+1,j/2,ten)-128)/chroma;
+        u=(readYuv(uv,us,x,j/2,ten)-128)/chroma;v=(readYuv(uv,us,x+1,j/2,ten)-128)/chroma;
         float d=deltaU*u+deltaV*v;
-        writeSDR(uvo,cs,x,j/2,128+224*(blue*u-d)/1.8556f,ten);
-        writeSDR(uvo,cs,x+1,j/2,128+224*(red*v-d)/1.5748f,ten);
+        writeYuv(uvo,cs,x,j/2,128+224*(blue*u-d)/1.8556f,ten);
+        writeYuv(uvo,cs,x+1,j/2,128+224*(red*v-d)/1.5748f,ten);
     }
 }
 

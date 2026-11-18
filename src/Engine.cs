@@ -38,7 +38,7 @@ record Media(int W, int H, string Rate, double Fps, double Duration, string Tran
         return Rotation%180==0?(width,height):(height,width);
     }
     public bool GpuColourSupported => IsHdr
-        ? !DolbyVision && Pixel=="yuv420p10le" && Range=="tv" && Primaries=="bt2020" && Matrix=="bt2020nc"
+        ? !DolbyVision && Pixel=="yuv420p10le" && (Range is "tv" or "pc") && Primaries=="bt2020" && Matrix=="bt2020nc"
         : (Pixel is "yuv420p" or "yuvj420p" or "yuv420p10le")
           && (Matrix is "" or "unknown" or "bt709" or "bt470bg" or "smpte170m")
           && (Primaries is "" or "unknown" or "bt709") && (Transfer is "" or "unknown" or "bt709" or "smpte170m")
@@ -213,6 +213,7 @@ static class Engine {
             if(o.Fg) {
                 var normalized=Path.Combine(cwd,output);
                 var info=await Probe(normalized,token);
+                log(engine+"_GPU_AFTER_CONVERSION");
                 await InterpolateGpu(normalized,0,-1,info.Frames);
             }
             return;
@@ -284,6 +285,9 @@ static class Engine {
             lock(writer) writer.WriteLine(line);
             if(line is "VFG_GPU_START" or "LSFG_GPU_START") {
                 fgName=fgEngine+T(" · GPU-memory path"," · 显存直通");
+                update(fgName,0);
+            } else if(line is "VFG_GPU_AFTER_CONVERSION" or "LSFG_GPU_AFTER_CONVERSION") {
+                fgName=fgEngine+T(" · GPU after conversion"," · 格式转换后 GPU 插帧");
                 update(fgName,0);
             } else if(line.StartsWith("VFG_GPU_FALLBACK") || line.StartsWith("LSFG_GPU_FALLBACK")) {
                 fgName=fgEngine+T(" · compatibility mode"," · 兼容模式");
