@@ -7,10 +7,17 @@ using Microsoft.Win32;
 
 namespace RtxStudio;
 
-record Options(bool Vsr, bool Hdr, bool Fg, bool Preview, double Start, bool Nvidia = false);
+sealed record ExportQuality(string Id, string Label, double Cq, int ReferenceMbps) {
+    public static readonly ExportQuality Efficient = new("efficient","高效",29,20);
+    public static readonly ExportQuality Standard = new("standard","标准",24,40);
+    public static readonly ExportQuality High = new("high","高质量",19,80);
+    public static readonly ExportQuality[] All = [Efficient,Standard,High];
+    public override string ToString() => $"{Label}（约 {ReferenceMbps} Mbps）";
+}
+record Options(bool Vsr, bool Hdr, bool Fg, bool Preview, double Start, bool Nvidia, ExportQuality Quality);
 record Media(int W, int H, string Rate, double Fps, double Duration, string Transfer, string Primaries,
              string Matrix, string Pixel, string Audio, string Sar, int Rotation, long Frames, double AudioOffset,
-             string Range);
+             string Range, double VideoMbps);
 record Result(string Path, Media Media);
 
 static class Engine {
@@ -61,7 +68,7 @@ static class Engine {
         return new((int)Number(Field(v,"width")), (int)Number(Field(v,"height")), rate, Fraction(rate), duration,
             Field(v,"color_transfer"),Field(v,"color_primaries"),Field(v,"color_space"),Field(v,"pix_fmt"),Field(audio,"codec_name"),
             Field(v,"sample_aspect_ratio","1:1"),rotation,(long)Number(Field(v,"nb_frames")),
-            Number(Field(audio,"start_time"))-Number(Field(v,"start_time")),Field(v,"color_range"));
+            Number(Field(audio,"start_time"))-Number(Field(v,"start_time")),Field(v,"color_range"),Number(Field(v,"bit_rate"))/1_000_000);
     }
     static string LosslessDll() {
         var steam = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam")?.GetValue("SteamPath") as string;
@@ -96,12 +103,15 @@ static class Engine {
     }
     static async Task Prepare(string input, Media m, Options o, string cwd, string rate, double length,
                               Action<string> log, CancellationToken token) {
+        bool finalEncode=!o.Hdr && !o.Vsr;
         if (o.Fg && o.Nvidia && m.Matrix=="bt709" && m.Transfer=="bt709" && m.Primaries=="bt709" &&
             m.Range=="tv" && m.Pixel=="yuv420p" && File.Exists(Path.Combine(Bin,"vfg","vfg-gpu.exe"))) {
             var fastFile=Path.Combine(cwd,"stage.gpu.mp4");
             try {
                 log("VFG_GPU_START");
-                await Run("vfg/vfg-gpu",[input,fastFile,F(o.Preview?o.Start:0),F(o.Preview?length:-1),m.Rate],cwd,log,token);
+                var gpuArgs=new List<string>{input,fastFile,F(o.Preview?o.Start:0),F(o.Preview?length:-1),m.Rate};
+                if(finalEncode) gpuArgs.Add(F(o.Quality.Cq));
+                await Run("vfg/vfg-gpu",gpuArgs,cwd,log,token);
                 var stage=await Probe(fastFile,token);
                 if (stage.Frames<=0 || stage.W!=m.W || stage.H!=m.H || Math.Abs(stage.Fps-2*m.Fps)>.01 ||
                     Math.Abs(stage.Duration-length)>1.1/m.Fps || (!o.Preview && m.Frames>0 && stage.Frames!=2*m.Frames))
@@ -119,9 +129,12 @@ static class Engine {
         from.AddRange(["-i",input,"-map","0:V:0","-an","-sn","-dn"]);
         if (o.Preview) from.AddRange(["-t",F(length)]);
         var fps = "fps="+m.Rate;
-        var normal = "scale=in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,setsar=1";
-        var enc = new List<string>{"-c:v","hevc_nvenc","-preset","p3","-rc","constqp","-qp","8","-bf","0",
-            "-pix_fmt","yuv420p","-colorspace","bt709","-color_primaries","bt709","-color_trc","bt709","-color_range","tv","stage.mp4"};
+        const string tags="setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709";
+        var normal = "scale=in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,setsar=1,"+tags;
+        var enc = new List<string>{"-c:v","hevc_nvenc"};
+        if(finalEncode) enc.AddRange(["-preset","p5","-rc","vbr","-cq",F(o.Quality.Cq),"-b:v","0","-maxrate","240M"]);
+        else enc.AddRange(["-preset","p3","-rc","constqp","-qp","8"]);
+        enc.AddRange(["-bf","0","-pix_fmt","yuv420p","-colorspace","bt709","-color_primaries","bt709","-color_trc","bt709","-color_range","tv","stage.mp4"]);
         if (!o.Fg) {
             from.AddRange(["-vf",fps+","+normal]); from.AddRange(enc);
             await Run("ffmpeg",from,cwd,log,token); return;
@@ -136,7 +149,7 @@ static class Engine {
             using var worker = Spawn(o.Nvidia ? "vfg/nvidia-vfg" : "lsfg-file",workerArgs,cwd,input:true,output:true);
             processes.Add(worker);
             var args = new List<string>{"-v","error","-f","rawvideo","-pix_fmt","rgba","-video_size",$"{m.W}x{m.H}",
-                "-framerate",rate,"-i","pipe:0","-vf","scale=in_range=pc:out_range=tv:out_color_matrix=bt709,format=yuv420p"};
+                "-framerate",rate,"-i","pipe:0","-vf","scale=in_range=pc:out_range=tv:out_color_matrix=bt709,format=yuv420p,"+tags};
             args.AddRange(enc);
             using var encode = Spawn("ffmpeg",args,cwd,input:true);
             processes.Add(encode);
@@ -183,21 +196,33 @@ static class Engine {
             if(line.StartsWith("VFG_GPU_FALLBACK")) fgName="NVIDIA VFG High · 兼容模式";
             if((line.StartsWith("LSFG_FRAMES ") || line.StartsWith("VFG_FRAMES ")) && long.TryParse(line.AsSpan(line.IndexOf(' ')+1),out var count))
                 update(fgName+" 正在生成中间帧",Math.Min(.47,.47*count/(m.Fps*length)));
-            if(stage==1 && Regex.Match(line,@"Frame\s+(\d+)\s*/\s*(\d+)") is {Success:true} hit)
-                update("RTX 正在增强并编码",.48+.48*Number(hit.Groups[1].Value)/Math.Max(1,Number(hit.Groups[2].Value)));
+            if(stage==1 && Regex.Match(line,@"\]\s*(\d+) frames:") is {Success:true} hit)
+                update("正在编码 · "+o.Quality.Label,.48+.48*Math.Min(1,Number(hit.Groups[1].Value)/Math.Max(1,length*fps)));
         }
         try {
             update(o.Fg?"正在准备 "+fgName+" 插帧":"正在解码原片",0);
             await Prepare(input,m,o,cwd,rate,length,Log,token);
             var intermediate=await Probe(Path.Combine(cwd,"stage.mp4"),token);
             var video="stage.mp4";
-            if(o.Hdr || o.Vsr) {
-                stage=1;update("RTX 正在增强并编码",.48);
-                var args=new List<string>{"stage.mp4","enhanced.mp4",o.Hdr?(o.Vsr?"--vsr-hdr":"--hdr"):"--vsr",
-                    "--codec","hevc","--quality","16","--no-audio"};
-                if(o.Vsr)args.AddRange(["--output-size",$"{width}x{height}","--vsr-quality","4"]);
-                if(o.Hdr)args.AddRange(["--max-lum","1000"]);
-                await Run("sdr2hdr_cli",args,cwd,Log,token);video="enhanced.mp4";
+            bool nativeSizeVsr=o.Vsr && width==m.W && height==m.H;
+            if(nativeSizeVsr) {
+                // NVEncC skips resize filters at 1:1. Apply RTX VSR explicitly and use its NVENC CQ path.
+                stage=1;update("原尺寸 RTX VSR · "+o.Quality.Label,.48);
+                video="enhanced.mp4";
+                await Run("sdr2hdr_cli",["stage.mp4",video,o.Hdr?"--vsr-hdr":"--vsr","--legacy","--backend","nvenc",
+                    "--codec","hevc","--quality",F(o.Quality.Cq),"--no-audio","--output-size",$"{width}x{height}",
+                    "--vsr-quality","4","--max-lum","1000"],cwd,Log,token);
+            } else if(o.Hdr || o.Vsr) {
+                stage=1;update("正在编码 · "+o.Quality.Label,.48);
+                video="enhanced.mp4";
+                var args=new List<string>{"--avhw","-i","stage.mp4","-o",video,"-c","hevc","--preset","P5",
+                    "--qvbr",F(o.Quality.Cq),"--max-bitrate","240000","--bframes","0","--sar","1:1"};
+                if(o.Vsr) args.AddRange(["--output-res",$"{width}x{height}","--vpp-resize","algo=ngx-vsr,vsr-quality=4"]);
+                if(o.Hdr) args.AddRange(["--vpp-ngx-truehdr","contrast=100,saturation=100,middlegray=50,maxluminance=1000",
+                    "--output-depth","10","--colormatrix","bt2020nc","--colorprim","bt2020","--transfer","smpte2084",
+                    "--master-display","G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50)","--max-cll","1000,500"]);
+                else args.AddRange(["--colormatrix","bt709","--colorprim","bt709","--transfer","bt709"]);
+                await Run("encode/NVEncC64",args,cwd,Log,token);
             }
             update("正在写入原声并校验成片",.97);
             var mux=new List<string>{"-nostdin","-v","error","-i",video};
@@ -213,8 +238,10 @@ static class Engine {
                 if(!o.Preview && m.Audio=="aac" && Math.Abs(m.AudioOffset)<.002) mux.AddRange(["-c:a","copy"]);
                 else mux.AddRange(["-c:a","aac","-b:a","320k"]);
             }
-            mux.AddRange(["-video_track_timescale",num.ToString(),"-bsf:v",$"setts=pts=N*{den}:dts=N*{den}:duration={den}:time_base=1/{num}",
-                "-t",F(intermediate.Frames/fps),"-movflags","+faststart","final.mp4"]);
+            mux.AddRange(["-video_track_timescale",num.ToString()]);
+            // The native-size encoder already writes CFR timestamps in display order, including B-frames.
+            if(!nativeSizeVsr) mux.AddRange(["-bsf:v",$"setts=pts=N*{den}:dts=N*{den}:duration={den}:time_base=1/{num}"]);
+            mux.AddRange(["-t",F(intermediate.Frames/fps),"-movflags","+faststart","final.mp4"]);
             await Run("ffmpeg",mux,cwd,Log,token);
             var final=Path.Combine(cwd,"final.mp4");var info=await Probe(final,token);
             if(info.W!=width || info.H!=height || info.Frames!=intermediate.Frames || info.Frames<1 ||

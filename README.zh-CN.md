@@ -7,8 +7,14 @@
 ## 下载与使用
 
 1. 从 [GitHub Releases](https://github.com/Aftrel/rtx-video-studio/releases/latest) 下载 Windows x64 压缩包，将整个文件夹解压到本地。
-2. 安装 [Microsoft .NET 10 桌面运行时（Windows x64）](https://dotnet.microsoft.com/download/dotnet/10.0)，然后双击 `Install-Runtime.cmd`。首次设置需要联网下载约 690 MB 的第三方组件；脚本会核对 SHA-256。
+2. 安装 [Microsoft .NET 10 桌面运行时（Windows x64）](https://dotnet.microsoft.com/download/dotnet/10.0)，然后双击 `Install-Runtime.cmd`。首次设置需要联网下载约 1 GB 的第三方组件；脚本会核对 SHA-256。
 3. 打开 `RTX Video Studio.exe`，拖入视频，选择需要的效果，点「生成 5 秒预览」或「处理完整视频」。成片默认保存在原片旁边，重名时自动编号。
+
+## 导出质量
+
+「导出质量」提供高效、标准（默认）、高质量三档。以校准用的 4K60 HDR 片源为例，三档的视频平均码率约为 **20、40、80 Mbps**。NVENC 按目标质量（CQ）分配码率，实际值随画面、分辨率和帧率变化。导出完成后可在状态栏查看成片的视频平均码率。
+
+命令行参数为 `--quality efficient`、`--quality standard` 或 `--quality high`。预览和整片使用同一档位。
 
 ## 两种插帧引擎
 
@@ -45,4 +51,4 @@ dotnet "RTX Video Studio.dll" --render "input.mp4" "output" --preview 20 --nvidi
 dotnet publish src/Studio.csproj -c Release -o build
 ```
 
-原生处理器的依赖及构建信息见 [组件来源](src/组件来源.txt)。LSFG 适配包含 [lsfg-vk-windows](https://github.com/56TR/lsfg-vk-windows) 的对应源码快照和 GPL 许可证。NVIDIA VFG 使用 [Maxine Video Effects SDK](https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html)，超分及 TrueHDR 通过 [sdr2hdr](https://github.com/zizhenliu0427/sdr2hdr) 调用 NVIDIA RTX Video SDK。第三方组件分别适用其上游许可。
+原生处理器的依赖及构建信息见 [组件来源](src/组件来源.txt)。LSFG 适配包含 [lsfg-vk-windows](https://github.com/56TR/lsfg-vk-windows) 的对应源码快照和 GPL 许可证。NVIDIA VFG 使用 [Maxine Video Effects SDK](https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html)，超分及 TrueHDR 通过 [NVEncC](https://github.com/rigaya/NVEnc) 调用 NVIDIA RTX Video SDK。原尺寸 VSR 使用 sdr2hdr 的 CQ 编码路径。此组件和独立版 FFmpeg 工具由安装脚本从 [sdr2hdr 发行包](https://github.com/zizhenliu0427/sdr2hdr/releases/tag/v1.1.0) 获取。第三方组件分别适用其上游许可。

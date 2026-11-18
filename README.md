@@ -7,8 +7,14 @@ Turn SDR footage into a 4K HDR10 MP4 at twice the source frame rate. You can ena
 ## Getting started
 
 1. Download the Windows x64 ZIP from the release page and extract the entire folder.
-2. Install the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/download/dotnet/10.0). Double-click `Install-Runtime.cmd` to download about 690 MB of dependencies. The installer verifies each download with SHA-256.
+2. Install the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/download/dotnet/10.0). Double-click `Install-Runtime.cmd` to download about 1 GB of dependencies. The installer verifies each download with SHA-256.
 3. Open `RTX Video Studio.exe`, drag a video into the window, and select the effects you want. The interface is in Chinese. Choose **生成 5 秒预览** for a five-second preview or **处理完整视频** to export the full video. By default, the app saves the result next to the input and adds a number if the filename is already in use.
+
+## Export quality
+
+The **导出质量** menu controls HEVC compression. Efficient (高效), Standard (标准, default), and High (高质量) correspond to roughly **20, 40, and 80 Mbps** of video for the 4K60 HDR calibration clip. NVENC uses target-quality VBR (CQ) and varies the bitrate with the footage. Other resolutions and frame rates can produce substantially different rates. The app displays the measured video bitrate after export.
+
+Use `--quality efficient`, `--quality standard`, or `--quality high` on the command line. Previews and full exports use the same setting.
 
 ## Frame interpolation
 
@@ -44,4 +50,4 @@ The desktop app and native workers are in `src/`. To build the Windows Forms app
 dotnet publish src/Studio.csproj -c Release -o build
 ```
 
-The LSFG worker includes the corresponding upstream source snapshot and GPL license from [lsfg-vk-windows](https://github.com/56TR/lsfg-vk-windows). The NVIDIA worker uses the [Maxine Video Effects SDK](https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html). Upscaling and HDR conversion use the RTX Video SDK through [sdr2hdr](https://github.com/zizhenliu0427/sdr2hdr). For native build dependencies and component versions, see the [component notes (Chinese)](src/组件来源.txt). Each third-party component is subject to its upstream license.
+The LSFG worker includes the corresponding upstream source snapshot and GPL license from [lsfg-vk-windows](https://github.com/56TR/lsfg-vk-windows). The NVIDIA worker uses the [Maxine Video Effects SDK](https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html). Upscaling and HDR conversion use the RTX Video SDK through [NVEncC](https://github.com/rigaya/NVEnc). For same-size VSR, the app uses the CQ encoding path in sdr2hdr. The installer obtains it and the standalone FFmpeg tools from the [sdr2hdr release](https://github.com/zizhenliu0427/sdr2hdr/releases/tag/v1.1.0). For native build dependencies and component versions, see the [component notes (Chinese)](src/组件来源.txt). Each third-party component is subject to its upstream license.

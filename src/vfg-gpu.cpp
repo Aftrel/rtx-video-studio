@@ -53,7 +53,7 @@ public:
     Packet packet{av_packet_alloc()};
     int64_t written=0;
     ~Writer(){if(mux){avio_closep(&mux->pb);avformat_free_context(mux);}}
-    void open(const char* filename,int w,int h,AVRational fps,AVBufferRef* frames){
+    void open(const char* filename,int w,int h,AVRational fps,AVBufferRef* frames,const char* finalCq){
         avok(avformat_alloc_output_context2(&mux,nullptr,"mp4",filename),"MP4 output");
         const auto* codec=avcodec_find_encoder_by_name("hevc_nvenc");
         if(!codec)throw std::runtime_error("NVENC unavailable");
@@ -63,7 +63,11 @@ public:
         enc->colorspace=AVCOL_SPC_BT709;enc->color_trc=AVCOL_TRC_BT709;enc->color_primaries=AVCOL_PRI_BT709;
         enc->color_range=AVCOL_RANGE_MPEG;enc->chroma_sample_location=AVCHROMA_LOC_LEFT;
         enc->max_b_frames=0;enc->gop_size=250;enc->flags|=AV_CODEC_FLAG_GLOBAL_HEADER;
-        AVDictionary* opts=nullptr;av_dict_set(&opts,"preset","p3",0);av_dict_set(&opts,"rc","constqp",0);av_dict_set(&opts,"qp","8",0);
+        AVDictionary* opts=nullptr;
+        av_dict_set(&opts,"preset",finalCq?"p5":"p3",0);
+        av_dict_set(&opts,"rc",finalCq?"vbr":"constqp",0);
+        av_dict_set(&opts,finalCq?"cq":"qp",finalCq?finalCq:"8",0);
+        if(finalCq){enc->bit_rate=0;enc->rc_max_rate=240000000;}
         auto result=avcodec_open2(enc.get(),codec,&opts);av_dict_free(&opts);avok(result,"open NVENC");
         video=avformat_new_stream(mux,nullptr);if(!video)throw std::bad_alloc();
         video->time_base=enc->time_base;video->avg_frame_rate=fps;
@@ -114,7 +118,7 @@ public:
         cuok(cuStreamSynchronize(stream),"finish frame");prev.swap(cur);
     }
 };
-static int render(const std::filesystem::path& file,const std::filesystem::path& ptx,const char* dst,double start,double length,AVRational rate){
+static int render(const std::filesystem::path& file,const std::filesystem::path& ptx,const char* dst,double start,double length,AVRational rate,const char* finalCq){
     AVFormatContext* raw=nullptr;avok(avformat_open_input(&raw,utf8(file).c_str(),nullptr,nullptr),"open input");Input input(raw);
     avok(avformat_find_stream_info(raw,nullptr),"inspect video");
     int index=-1;
@@ -134,7 +138,7 @@ static int render(const std::filesystem::path& file,const std::filesystem::path&
     Buffer frames(av_hwframe_ctx_alloc(dev));if(!frames)throw std::bad_alloc();auto* hw=reinterpret_cast<AVHWFramesContext*>(frames->data);
     hw->format=AV_PIX_FMT_CUDA;hw->sw_format=AV_PIX_FMT_NV12;hw->width=w;hw->height=h;hw->initial_pool_size=8;
     avok(av_hwframe_ctx_init(frames.get()),"encoder surface pool");
-    Writer writer;writer.open(dst,w,h,av_mul_q(rate,{2,1}),frames.get());Interpolator vfg(w,h,ptx);
+    Writer writer;writer.open(dst,w,h,av_mul_q(rate,{2,1}),frames.get(),finalCq);Interpolator vfg(w,h,ptx);
     Frame current(av_frame_alloc()),last(av_frame_alloc()),middle(av_frame_alloc());Packet packet(av_packet_alloc());
     int64_t count=0;
     double firstTime=-1;const double fps=av_q2d(rate);const int64_t origin=s->start_time==AV_NOPTS_VALUE?0:s->start_time;
@@ -174,10 +178,11 @@ static int render(const std::filesystem::path& file,const std::filesystem::path&
     std::fprintf(stderr,"VFG_GPU_DONE %lld -> %lld\n",(long long)count,(long long)writer.written);return 0;
 }
 int wmain(int argc,wchar_t** argv){
-    if(argc!=6){std::fprintf(stderr,"Usage: vfg-gpu input output start length fps\n");return 2;}
+    if(argc!=6 && argc!=7){std::fprintf(stderr,"Usage: vfg-gpu input output start length fps [final-cq]\n");return 2;}
     try{
         av_log_set_level(AV_LOG_ERROR);AVRational r{};avok(av_parse_video_rate(&r,utf8(argv[5]).c_str()),"frame rate");
         wchar_t own[32768];GetModuleFileNameW(nullptr,own,32768);
-        return render(argv[1],std::filesystem::path(own).parent_path()/L"colour.ptx",utf8(argv[2]).c_str(),std::stod(argv[3]),std::stod(argv[4]),r);
+        const auto quality=argc==7?utf8(argv[6]):std::string{};
+        return render(argv[1],std::filesystem::path(own).parent_path()/L"colour.ptx",utf8(argv[2]).c_str(),std::stod(argv[3]),std::stod(argv[4]),r,argc==7?quality.c_str():nullptr);
     }catch(const std::exception& e){std::fprintf(stderr,"GPU path: %s\n",e.what());return 1;}
 }
