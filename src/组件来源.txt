@@ -7,6 +7,8 @@ https://github.com/KhronosGroup/Vulkan-Headers
 https://github.com/mstorsjo/llvm-mingw/releases/tag/20261104
 LSFG 计算模块及适配修改遵循 GPL-3.0-or-later。Lossless.dll 由用户本机的 Lossless Scaling 提供。
 
+构建 LSFG 显存直通版时，在 build_worker.py 的四个参数后面依次追加 FFmpeg 8.1.2 shared 开发目录和 CUDA 12.9 Runtime 开发目录。前者包含 include 和 lib，后者包含 include 和 lib/x64/cuda.lib。输出为 bin/vfg/lsfg-gpu.exe，使用同目录的 FFmpeg DLL 和 colour.ptx。lsfg-gpu.inc 通过 Vulkan 和 CUDA 的 Win32 共享显存与时间线信号量交接帧，gpu-video.hpp 负责两种插帧引擎共用的解码、帧时间戳检查和编码。
+
 NVIDIA VFG 文件处理器源代码为 vfg-file.cpp。使用 NVIDIA Maxine 的公开头文件 nvCVImage.h、nvCVStatus.h、nvVideoEffects.h，链接 NVVideoEffects.dll 和 NVCVImage.dll。编译参数为 -std=c++20 -O2 -static -municode，使用 Windows x64 llvm-mingw。运行库来自 NVIDIA 官方 nvidia-vfx 0.2.0.0 的 Windows x64 发行包。本地处理通过 C API 直接调用。
 https://github.com/NVIDIA-Maxine/Maxine-VFX-SDK/tree/main/nvvfx/include
 https://pypi.nvidia.com/nvidia-vfx/

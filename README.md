@@ -27,7 +27,7 @@ Use `--quality efficient`, `--quality standard`, or `--quality high` on the comm
 | Lossless Scaling (LSFG) | Uses your local Steam installation of Lossless Scaling. Tested with version 3.2.2. This is the default engine. |
 | NVIDIA Maxine VFG | Uses High quality mode with 2× frame interpolation and automatic scene-cut detection. Supports Ada and Blackwell GPUs. |
 
-For eligible 8-bit, limited-range BT.709 inputs with a constant frame rate, NVIDIA VFG uses NVDEC to decode, keeps frames in GPU memory during interpolation, and encodes with NVENC. The status line shows **GPU-memory path** when this path is active. Other supported inputs use the compatibility path.
+For eligible 8-bit, limited-range BT.709 inputs with a constant frame rate, both engines use NVDEC for decoding and NVENC for encoding. LSFG shares a buffer in video memory between CUDA and its Vulkan interpolation engine. The status line shows **GPU-memory path** during accelerated interpolation. Other supported inputs use the compatibility path automatically.
 
 ## Input and output
 

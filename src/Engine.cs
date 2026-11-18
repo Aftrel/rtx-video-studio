@@ -112,14 +112,18 @@ static class Engine {
     static async Task Prepare(string input, Media m, Options o, string cwd, string rate, double length,
                               Action<string> log, CancellationToken token) {
         bool finalEncode=!o.Hdr && !o.Vsr;
-        if (o.Fg && o.Nvidia && m.Matrix=="bt709" && m.Transfer=="bt709" && m.Primaries=="bt709" &&
-            m.Range=="tv" && m.Pixel=="yuv420p" && File.Exists(Path.Combine(Bin,"vfg","vfg-gpu.exe"))) {
+        var gpuWorker=o.Nvidia?"vfg/vfg-gpu":"vfg/lsfg-gpu";
+        var engine=o.Nvidia?"VFG":"LSFG";
+        var losslessDll=o.Fg && !o.Nvidia ? LosslessDll() : null;
+        if (o.Fg && m.Matrix=="bt709" && m.Transfer=="bt709" && m.Primaries=="bt709" &&
+            m.Range=="tv" && m.Pixel=="yuv420p" && File.Exists(Path.Combine(Bin,gpuWorker+".exe"))) {
             var fastFile=Path.Combine(cwd,"stage.gpu.mp4");
             try {
-                log("VFG_GPU_START");
+                log(engine+"_GPU_START");
                 var gpuArgs=new List<string>{input,fastFile,F(o.Preview?o.Start:0),F(o.Preview?length:-1),m.Rate};
+                if(losslessDll!=null) gpuArgs.Add(losslessDll);
                 if(finalEncode) gpuArgs.Add(F(o.Quality.Cq));
-                await Run("vfg/vfg-gpu",gpuArgs,cwd,log,token);
+                await Run(gpuWorker,gpuArgs,cwd,log,token);
                 var stage=await Probe(fastFile,token);
                 if (stage.Frames<=0 || stage.W!=m.W || stage.H!=m.H || Math.Abs(stage.Fps-2*m.Fps)>.01 ||
                     Math.Abs(stage.Duration-length)>1.1/m.Fps || (!o.Preview && m.Frames>0 && stage.Frames!=2*m.Frames))
@@ -128,7 +132,7 @@ static class Engine {
                 return;
             } catch (Exception ex) when (!token.IsCancellationRequested &&
                     (ex is IOException || ex is System.ComponentModel.Win32Exception)) {
-                log("VFG_GPU_FALLBACK "+ex.Message);
+                log(engine+"_GPU_FALLBACK "+ex.Message);
                 File.Delete(fastFile);
             }
         }
@@ -148,7 +152,7 @@ static class Engine {
             await Run("ffmpeg",from,cwd,log,token); return;
         }
         var workerArgs = new List<string>{m.W.ToString(),m.H.ToString()};
-        if (!o.Nvidia) workerArgs.Add(LosslessDll());
+        if (losslessDll!=null) workerArgs.Add(losslessDll);
         from.AddRange(["-vf",fps+",scale=in_color_matrix=auto:out_range=pc,format=rgba","-f","rawvideo","pipe:1"]);
         using var decode = Spawn("ffmpeg",from,cwd,output:true);
         var processes = new List<Process>{decode};
@@ -198,11 +202,12 @@ static class Engine {
         var logPath=Path.Combine(cwd,"job.log");
         using var writer=new StreamWriter(new FileStream(logPath,FileMode.CreateNew,FileAccess.Write,FileShare.ReadWrite|FileShare.Delete),new UTF8Encoding(false)){AutoFlush=true};
         var stage=0;
-        var fgName=o.Nvidia?"NVIDIA VFG High":"LSFG";
+        var fgEngine=o.Nvidia?"NVIDIA VFG High":"LSFG";
+        var fgName=fgEngine;
         void Log(string line) {
             lock(writer) writer.WriteLine(line);
-            if(line=="VFG_GPU_START") fgName=T("NVIDIA VFG High · GPU-memory path","NVIDIA VFG High · 显存直通");
-            if(line.StartsWith("VFG_GPU_FALLBACK")) fgName=T("NVIDIA VFG High · compatibility mode","NVIDIA VFG High · 兼容模式");
+            if(line is "VFG_GPU_START" or "LSFG_GPU_START") fgName=fgEngine+T(" · GPU-memory path"," · 显存直通");
+            if(line.StartsWith("VFG_GPU_FALLBACK") || line.StartsWith("LSFG_GPU_FALLBACK")) fgName=fgEngine+T(" · compatibility mode"," · 兼容模式");
             if((line.StartsWith("LSFG_FRAMES ") || line.StartsWith("VFG_FRAMES ")) && long.TryParse(line.AsSpan(line.IndexOf(' ')+1),out var count))
                 update(fgName+T(" · generating intermediate frames"," 正在生成中间帧"),Math.Min(.47,.47*count/(m.Fps*length)));
             if(stage==1 && Regex.Match(line,@"\]\s*(\d+) frames:") is {Success:true} hit)

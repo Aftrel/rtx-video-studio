@@ -20,4 +20,4 @@ NVIDIA VFG · 高质量使用 NVIDIA Maxine Video Frame Generation 的 High 模�
 --nvidia-vfg 选择 NVIDIA VFG，否则使用 LSFG。--preview 20 从第 20 秒生成预览。
 --no-vsr、--no-hdr、--no-fg 分别关闭一种处理效果。
 
-对于 BT.709、8 位、有限范围的恒定帧率 SDR 片源，NVIDIA VFG 自动启用 NVDEC 硬解、CUDA 显存传帧及 NVENC 编码。状态栏显示「显存直通」。其余受支持的片源自动走兼容路径。
+对于符合条件的 BT.709、8 位、有限范围的恒定帧率 SDR 片源，LSFG 和 NVIDIA VFG 都会自动启用 NVDEC 硬解、显存传帧和 NVENC 编码。状态栏显示「显存直通」。其余受支持的片源自动走兼容路径。

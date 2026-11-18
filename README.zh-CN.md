@@ -27,7 +27,7 @@
 | Lossless Scaling · LSFG | 使用本机 Steam 安装的 Lossless Scaling。已验证 3.2.2。 |
 | NVIDIA VFG · 高质量 | 调用 NVIDIA Maxine Video Frame Generation 的 High 模式，使用两倍帧率和自动切镜检测。支持 Ada、Blackwell 架构的 GPU。 |
 
-部分 8 位、有限范围、BT.709 恒定帧率片源能够使用 NVIDIA VFG 的「显存直通」路径，通过 NVDEC 解码，在显存中生成中间帧，再用 NVENC 编码。其他受支持的输入使用兼容路径。
+对于符合条件的 8 位、有限范围、BT.709 恒定帧率片源，LSFG 和 NVIDIA VFG 都能通过 NVDEC 解码，在显存中插帧，再用 NVENC 编码。LSFG 通过一块共享显存把 CUDA 颜色转换和 Vulkan 插帧连接起来。加速生效时状态栏显示「显存直通」。其他受支持的片源会自动使用兼容路径。
 
 ## 导出规格
 
