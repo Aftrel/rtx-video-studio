@@ -1,0 +1,22 @@
+桌面界面和调度器由 Studio.cs、Engine.cs 组成，使用 .NET 10 Windows Forms。
+构建桌面程序：dotnet publish Studio.csproj -c Release -o ../
+
+LSFG 文件处理器由 offline.inc 和 lsfg-vk-windows 的计算后端组成。构建脚本 build_worker.py 接收 llvm-mingw clang++.exe、解压的上游源码、Khronos Vulkan-Headers 和临时构建目录四个参数。lsfg-vk-source.zip 为构建使用的上游快照。
+https://github.com/56TR/lsfg-vk-windows/tree/b03458e44eb5cc5a87537b3743f52617974e2389
+https://github.com/KhronosGroup/Vulkan-Headers
+https://github.com/mstorsjo/llvm-mingw/releases/tag/20261104
+LSFG 计算模块及适配修改遵循 GPL-3.0-or-later。Lossless.dll 由用户本机的 Lossless Scaling 提供。
+
+NVIDIA VFG 文件处理器源代码为 vfg-file.cpp。使用 NVIDIA Maxine 的公开头文件 nvCVImage.h、nvCVStatus.h、nvVideoEffects.h，链接 NVVideoEffects.dll 和 NVCVImage.dll。编译参数为 -std=c++20 -O2 -static -municode，使用 Windows x64 llvm-mingw。运行库来自 NVIDIA 官方 nvidia-vfx 0.2.0.0 的 Windows x64 发行包。本地处理通过 C API 直接调用。
+https://github.com/NVIDIA-Maxine/Maxine-VFX-SDK/tree/main/nvvfx/include
+https://pypi.nvidia.com/nvidia-vfx/
+https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html
+
+VSR / TrueHDR CLI、RTX SDK 运行库及 FFmpeg 工具来自 sdr2hdr v1.1.0 的 Windows 发行包，CUDA Runtime 来自 NVIDIA 的 nvidia-cuda-runtime-cu12 12.9.79。此文件夹按当前电脑使用整理。
+https://github.com/zizhenliu0427/sdr2hdr/releases/tag/v1.1.0
+https://developer.nvidia.com/rtx-video-sdk
+https://pypi.org/project/nvidia-cuda-runtime-cu12/12.9.79/
+
+
+vfg-gpu.cpp 与 vfg-colour.cu 实现 NVIDIA VFG 的 CUDA 显存直通路径，使用 FFmpeg 8.1 Windows x64 shared 版的 libavformat、libavcodec、libavutil 和 NVENC。CUDA 12.9 NVRTC 将颜色转换内核编译为 compute_75 PTX，程序启动时由驱动加载。构建需使用 FFmpeg 开发头文件和导入库、CUDA Driver API、NVIDIA VFX 导入库及头文件，编译目标为 Windows x64。
+https://github.com/BtbN/FFmpeg-Builds
