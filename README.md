@@ -1,47 +1,47 @@
 # RTX Video Studio
 
-在 Windows 上把 SDR 视频导出为 **4K、双倍帧率、HDR10** 的 MP4。可以分别开启 RTX Video Super Resolution、RTX Video HDR 和插帧，也可以先指定起点，比较同一段 5 秒预览。
+[简体中文](README.zh-CN.md) · [Download for Windows x64](https://github.com/Aftrel/rtx-video-studio/releases/latest)
 
-## 下载与使用
+Turn SDR footage into a 4K HDR10 MP4 at twice the source frame rate. You can enable RTX Video Super Resolution, RTX Video HDR, and frame interpolation independently. To compare interpolation engines before a full export, render the same five-second clip with each one.
 
-1. 从 [GitHub Releases](https://github.com/Aftrel/rtx-video-studio/releases/latest) 下载 Windows x64 压缩包，将整个文件夹解压到本地。
-2. 安装 [Microsoft .NET 10 桌面运行时（Windows x64）](https://dotnet.microsoft.com/download/dotnet/10.0)，然后双击 `Install-Runtime.cmd`。首次设置需要联网下载约 690 MB 的第三方组件；脚本会核对 SHA-256。
-3. 打开 `RTX Video Studio.exe`，拖入视频，选择需要的效果，点「生成 5 秒预览」或「处理完整视频」。成片默认保存在原片旁边，重名时自动编号。
+## Getting started
 
-## 两种插帧引擎
+1. Download the Windows x64 ZIP from the release page and extract the entire folder.
+2. Install the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/download/dotnet/10.0). Double-click `Install-Runtime.cmd` to download about 690 MB of dependencies. The installer verifies each download with SHA-256.
+3. Open `RTX Video Studio.exe`, drag a video into the window, and select the effects you want. The interface is in Chinese. Choose **生成 5 秒预览** for a five-second preview or **处理完整视频** to export the full video. By default, the app saves the result next to the input and adds a number if the filename is already in use.
 
-| 引擎 | 适用条件与行为 |
+## Frame interpolation
+
+| Engine | Requirements and behavior |
 | --- | --- |
-| Lossless Scaling · LSFG | 使用本机 Steam 安装的 Lossless Scaling。已验证 3.2.2。 |
-| NVIDIA VFG · 高质量 | 调用 NVIDIA Maxine Video Frame Generation 的 High 模式，使用两倍帧率和自动切镜检测。支持 Ada、Blackwell 架构的 GPU。 |
+| Lossless Scaling (LSFG) | Uses your local Steam installation of Lossless Scaling. Tested with version 3.2.2. This is the default engine. |
+| NVIDIA Maxine VFG | Uses High quality mode with 2× frame interpolation and automatic scene-cut detection. Supports Ada and Blackwell GPUs. |
 
-部分 8 位、有限范围、BT.709 恒定帧率片源能够使用 NVIDIA VFG 的「显存直通」路径，通过 NVDEC 解码，在显存中生成中间帧，再用 NVENC 编码。其他受支持的输入使用兼容路径。
+For eligible 8-bit, limited-range BT.709 inputs with a constant frame rate, NVIDIA VFG uses NVDEC to decode, keeps frames in GPU memory during interpolation, and encodes with NVENC. The status line shows **显存直通** when this path is active. Other supported inputs use the compatibility path.
 
-## 导出规格
+## Input and output
 
-- 超分保持原片比例，放入 3840 × 2160 的范围。TrueHDR 以 1000 尼特为目标，输出 HEVC Main 10、BT.2020、PQ。
-- 支持常见偶数尺寸、方形像素的 SDR 视频。当前导出第一条主视频和第一条音轨。HDR 输入及带旋转标记的片源暂不支持。
-- 整片优先直通 AAC 音轨，预览和其他受支持的音轨会重新编码。处理期间需要为临时视频保留磁盘空间。
-- 本机验证环境为 Windows x64、GeForce RTX 5070 Ti、驱动 621.24。一次整片验证将 129.5 秒的 1080p30 视频导出为 7770 帧的 2160p60 HDR10，AAC 音轨哈希与原片一致。
+- **Video** — Accepts SDR inputs with even dimensions, square pixels, and no rotation metadata. Upscaling preserves the aspect ratio and fits the image within 3840 × 2160. TrueHDR targets 1,000 nits and writes 10-bit HEVC with BT.2020 primaries and the PQ transfer function.
+- **Tracks** — Exports the first main video stream and the first audio track. Full exports copy compatible AAC audio. Previews and other supported audio formats are encoded as AAC. Allow disk space for intermediate video files.
+- **Tested export** — On Windows x64 with a GeForce RTX 5070 Ti and driver 621.24, a 129.5-second 1080p30 clip produced 7,770 frames of 2160p60 HDR10 video. The exported AAC stream matched the source audio hash.
 
-## 命令行
+## Command line
 
-在解压目录中运行：
+From the extracted folder, run either command. The second renders a five-second preview starting at 20 seconds.
 
 ```powershell
 dotnet "RTX Video Studio.dll" --render "input.mp4" "output" --nvidia-vfg
 dotnet "RTX Video Studio.dll" --render "input.mp4" "output" --preview 20 --nvidia-vfg
 ```
 
-默认插帧引擎为 LSFG。`--no-vsr`、`--no-hdr`、`--no-fg` 分别关闭超分、HDR、插帧。
+Omit `--nvidia-vfg` to use LSFG. Use `--no-vsr`, `--no-hdr`, or `--no-fg` to disable upscaling, HDR conversion, or frame interpolation, respectively.
 
-## 源码与组件
+## Source and build
 
-桌面应用与原生处理器在 `src/`。使用 .NET 10 SDK 编译桌面入口：
+The desktop app and native workers are in `src/`. To build the Windows Forms app with the .NET 10 SDK, run the following from the repository root.
 
 ```powershell
 dotnet publish src/Studio.csproj -c Release -o build
 ```
 
-原生处理器的依赖及构建信息见 [组件来源](src/组件来源.txt)。LSFG 适配包含 [lsfg-vk-windows](https://github.com/56TR/lsfg-vk-windows) 的对应源码快照和 GPL 许可证。NVIDIA VFG 使用 [Maxine Video Effects SDK](https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html)，超分及 TrueHDR 通过 [sdr2hdr](https://github.com/zizhenliu0427/sdr2hdr) 调用 NVIDIA RTX Video SDK。第三方组件分别适用其上游许可。
-
+The LSFG worker includes the corresponding upstream source snapshot and GPL license from [lsfg-vk-windows](https://github.com/56TR/lsfg-vk-windows). The NVIDIA worker uses the [Maxine Video Effects SDK](https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html). Upscaling and HDR conversion use the RTX Video SDK through [sdr2hdr](https://github.com/zizhenliu0427/sdr2hdr). For native build dependencies and component versions, see the [component notes (Chinese)](src/组件来源.txt). Each third-party component is subject to its upstream license.
