@@ -12,7 +12,7 @@ Turn SDR footage into a 4K HDR10 MP4 at twice the source frame rate. You can ena
 
 ## HDR look
 
-**Gentle** (default) rolls off bright SDR tones before RTX HDR expands them, with a 500-nit peak target. Near white, the curve gives closely spaced tones more separation, so textures such as ripples on bright water remain visible. It preserves linear RGB ratios. At native-size VSR, Gentle uses an additional GPU pass to apply the curve. **Classic** preserves the original 1,000-nit mapping. To compare, choose the same preview start time and export once with each look. On the command line, use `--hdr-look gentle` or `--hdr-look classic`.
+**Gentle** (default) rolls off bright SDR tones before RTX HDR expands them, with a 500-nit peak target. Near white, the curve gives closely spaced tones more separation, so textures such as ripples on bright water remain visible. It preserves linear RGB ratios. **Classic** preserves the original 1,000-nit mapping. To compare, choose the same preview start time and export once with each look. On the command line, use `--hdr-look gentle` or `--hdr-look classic`.
 
 ## Export quality
 
@@ -27,11 +27,19 @@ Use `--quality efficient`, `--quality standard`, or `--quality high` on the comm
 | Lossless Scaling (LSFG) | Uses your local Steam installation of Lossless Scaling. Tested with version 3.2.2. This is the default engine. |
 | NVIDIA Maxine VFG | Uses High quality mode with 2× frame interpolation and automatic scene-cut detection. Supports Ada and Blackwell GPUs. |
 
-For eligible 8-bit, limited-range BT.709 inputs with a constant frame rate, both engines use NVDEC for decoding and NVENC for encoding. LSFG shares a buffer in video memory between CUDA and its Vulkan interpolation engine. The status line shows **GPU-memory path** during accelerated interpolation. Other supported inputs use the compatibility path automatically.
+Both engines can keep decoded frames in GPU memory through interpolation and NVENC encoding. Eligible constant-frame-rate 4:2:0 inputs include 8- and 10-bit BT.709 SDR, full-range SDR, BT.601 matrix SDR, and 10-bit limited-range BT.2020 PQ or HLG. Full-range and BT.601 matrix conversion runs on the GPU. Untagged SDR uses BT.601 up to 576 lines and BT.709 above that. The status line shows **GPU-memory path** or **compatibility mode**. Other primaries, pixel formats and irregular timestamps may require conversion before interpolation. The supported codec profiles depend on the GPU.
 
 ## Input and output
 
-- **Video** — Accepts SDR inputs with even dimensions, square pixels, and no rotation metadata. Upscaling preserves the aspect ratio and fits the image within 3840 × 2160. TrueHDR writes 10-bit HEVC with BT.2020 primaries and the PQ transfer function.
+| Source | Available processing |
+| --- | --- |
+| SDR below 4K | RTX VSR, RTX Video HDR, 2× interpolation |
+| SDR already at 4K | RTX Video HDR and 2× interpolation at source resolution |
+| HDR10 or HLG below 4K | 10-bit GPU Lanczos scaling and 2× interpolation, preserving the source transfer function |
+| HDR10 or HLG already at 4K | 2× interpolation at source resolution |
+
+Studio disables effects already present in the source and restores your selections for the next eligible file. The 4K limit fits the original aspect ratio within 3840 × 2160 in landscape or 2160 × 3840 in portrait. Ultrawide footage at 3840 pixels across also keeps its native resolution. Square pixels, even dimensions and rotations in 90-degree steps are supported. Export handles static HDR10 metadata. Dolby Vision export and HDR10+ dynamic metadata preservation are unsupported.
+
 - **Tracks** — Exports the first main video stream and the first audio track. Full exports copy compatible AAC audio. Previews and other supported audio formats are encoded as AAC. Allow disk space for intermediate video files.
 - **Tested export** — On Windows x64 with a GeForce RTX 5070 Ti and driver 621.24, a 129.5-second 1080p30 clip produced 7,770 frames of 2160p60 HDR10 video. The exported AAC stream matched the source audio hash.
 
@@ -54,4 +62,4 @@ The desktop app and native workers are in `src/`. To build the Windows Forms app
 dotnet publish src/Studio.csproj -c Release -o build
 ```
 
-The LSFG worker includes the corresponding upstream source snapshot and GPL license from [lsfg-vk-windows](https://github.com/56TR/lsfg-vk-windows). The NVIDIA worker uses the [Maxine Video Effects SDK](https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html). Upscaling and HDR conversion use the RTX Video SDK through [NVEncC](https://github.com/rigaya/NVEnc). For same-size VSR, the app uses the CQ encoding path in sdr2hdr. The installer obtains it and the standalone FFmpeg tools from the [sdr2hdr release](https://github.com/zizhenliu0427/sdr2hdr/releases/tag/v1.1.0). For native build dependencies and component versions, see the [component notes (Chinese)](src/组件来源.txt). Each third-party component is subject to its upstream license.
+The LSFG worker includes the corresponding upstream source snapshot and GPL license from [lsfg-vk-windows](https://github.com/56TR/lsfg-vk-windows). The NVIDIA worker uses the [Maxine Video Effects SDK](https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html). Upscaling and HDR conversion use the RTX Video SDK through [NVEncC](https://github.com/rigaya/NVEnc). The installer obtains the standalone FFmpeg tools from the [sdr2hdr release](https://github.com/zizhenliu0427/sdr2hdr/releases/tag/v1.1.0). For native build dependencies and component versions, see the [component notes (Chinese)](src/组件来源.txt). Each third-party component is subject to its upstream license.

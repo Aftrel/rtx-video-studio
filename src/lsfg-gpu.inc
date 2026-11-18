@@ -39,7 +39,7 @@ struct Exchange {
         if(allocation) gpu.df().FreeMemory(gpu.dev(),allocation,nullptr);
         if(stream) cuStreamDestroy(stream);
     }
-    void open(size_t bytes,HANDLE timeline,const std::filesystem::path& ptx){
+    void open(size_t bytes,HANDLE timeline,const std::filesystem::path& ptx,bool ten){
         VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
         VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,&id};
         gpu.fi().GetPhysicalDeviceProperties2(gpu.physdev(),&properties);
@@ -81,8 +81,8 @@ struct Exchange {
         if(!file) throw std::runtime_error("Colour kernel missing");
         std::string code{std::istreambuf_iterator<char>(file),{}};
         cuok(cuModuleLoadData(&module,code.c_str()),"load colour kernels");
-        cuok(cuModuleGetFunction(&unpack,module,"unpack709"),"unpack kernel");
-        cuok(cuModuleGetFunction(&pack,module,"pack709"),"pack kernel");
+        cuok(cuModuleGetFunction(&unpack,module,ten?"unpackHalf":"unpack709"),"unpack kernel");
+        cuok(cuModuleGetFunction(&pack,module,ten?"packHalf":"pack709"),"pack kernel");
     }
     void wait(uint64_t value){
         CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS params{};params.params.fence.value=value;
@@ -103,7 +103,7 @@ std::string cudaPciAddress(){
 }
 
 class GpuFrames {
-    int width,height,pitch;
+    int width,height,pitch,colourFlags;
     Instance instance;
     Context& context;
     const vk::Vulkan& gpu;
@@ -126,15 +126,15 @@ class GpuFrames {
             0,0,nullptr,1,&barrier,0,nullptr);
     }
 public:
-    GpuFrames(int w,int h,const std::filesystem::path& dll,const std::filesystem::path& ptx)
-        :width(w),height(h),pitch(w*4),
+    GpuFrames(int w,int h,const std::filesystem::path& dll,const std::filesystem::path& ptx,const Colour& colour)
+        :width(w),height(h),pitch(w*(colour.ten?8:4)),colourFlags(colour.kernelFlags()),
         instance([pci=cudaPciAddress()](const std::string&,auto,const auto& address){return address==pci;},dll,true),
-        context(instance.openContext({nullptr,nullptr},{nullptr},nullptr,w,h,false,1.0f,false)),
+        context(instance.openContext({nullptr,nullptr},{nullptr},nullptr,w,h,colour.ten,1.0f,false)),
         gpu(context.ctx.vk.get()),timeline(gpu,0,std::nullopt,&timelineHandle.value),
         upload(gpu),download(gpu),shared(gpu),
         copyBack(reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(gpu.fi().GetDeviceProcAddr(gpu.dev(),"vkCmdCopyImageToBuffer"))){
         if(!copyBack) throw std::runtime_error("Vulkan image transfer unavailable");
-        shared.open(size_t(pitch)*height,timelineHandle.value,ptx);
+        shared.open(size_t(pitch)*height,timelineHandle.value,ptx,colour.ten);
         region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
         region.imageExtent={uint32_t(w),uint32_t(h),1};
         upload.begin(gpu);ownership(upload,true,0);upload.end(gpu);
@@ -143,7 +143,7 @@ public:
     }
     void process(AVFrame& src,AVFrame* mid){
         shared.wait(value);
-        void* inArgs[]={&src.data[0],&src.linesize[0],&src.data[1],&src.linesize[1],&shared.pixels,&pitch,&width,&height};
+        void* inArgs[]={&src.data[0],&src.linesize[0],&src.data[1],&src.linesize[1],&shared.pixels,&pitch,&width,&height,&colourFlags};
         cuok(cuLaunchKernel(shared.unpack,(width+15)/16,(height+15)/16,1,16,16,1,0,shared.stream,inArgs,nullptr),"NV12 to shared RGBA");
         shared.signal(++value);
 
@@ -164,7 +164,7 @@ public:
         download.submit(gpu,{},context.syncSemaphore.handle(),context.idx-1,{},timeline.handle(),++value);
         shared.wait(value);
         if(mid){
-            void* outArgs[]={&shared.pixels,&pitch,&mid->data[0],&mid->linesize[0],&mid->data[1],&mid->linesize[1],&width,&height};
+            void* outArgs[]={&shared.pixels,&pitch,&mid->data[0],&mid->linesize[0],&mid->data[1],&mid->linesize[1],&width,&height,&colourFlags};
             cuok(cuLaunchKernel(shared.pack,(width+31)/32,(height+31)/32,1,16,16,1,0,shared.stream,outArgs,nullptr),"shared RGBA to NV12");
         }
         cuok(cuStreamSynchronize(shared.stream),"finish LSFG frame");
@@ -180,7 +180,7 @@ int wmain(int argc,wchar_t** argv){
         wchar_t own[32768];GetModuleFileNameW(nullptr,own,32768);
         const auto ptx=std::filesystem::path(own).parent_path()/L"colour.ptx";
         const auto quality=argc==8?utf8(argv[7]):std::string{};
-        return renderGpu("LSFG",[&](int w,int h){return lsfgvk::backend::GpuFrames(w,h,argv[6],ptx);},
+        return renderGpu("LSFG",[&](int w,int h,const Colour& colour){return lsfgvk::backend::GpuFrames(w,h,argv[6],ptx,colour);},ptx,
             argv[1],utf8(argv[2]).c_str(),std::stod(argv[3]),std::stod(argv[4]),rate,argc==8?quality.c_str():nullptr);
     }catch(const std::exception& e){std::fprintf(stderr,"LSFG GPU path: %s\n",e.what());return 1;}
 }

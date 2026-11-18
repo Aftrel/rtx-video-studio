@@ -14,7 +14,7 @@ https://github.com/NVIDIA-Maxine/Maxine-VFX-SDK/tree/main/nvvfx/include
 https://pypi.nvidia.com/nvidia-vfx/
 https://docs.nvidia.com/maxine/vfx/latest/Filters/VideoFrameGeneration.html
 
-VSR、TrueHDR 和最终 HEVC 目标质量编码由 NVEncC 9.41 的 x64 版处理。应用使用 NGX VSR、NGX TrueHDR 和 NVENC QVBR。仅插帧时由插帧管线直接完成 NVENC CQ 编码。原尺寸 VSR 使用 sdr2hdr 的 NVENC CQ 路径和其 CUDA 12 运行时。FFmpeg 和 FFprobe 的独立可执行文件取自 sdr2hdr v1.1.0 发布包。
+VSR、TrueHDR 和最终 HEVC 目标质量编码由 NVEncC 9.41 的 x64 版处理。应用使用 NGX VSR、NGX TrueHDR 和 NVENC QVBR。仅插帧时由插帧管线直接完成 NVENC CQ 编码。原生 HDR 的放大使用 NVEncC 的 10 位 Lanczos，保留 PQ 或 HLG。FFmpeg 和 FFprobe 的独立可执行文件取自 sdr2hdr v1.1.0 发布包。
 https://github.com/rigaya/NVEnc/releases/tag/9.41
 https://github.com/zizhenliu0427/sdr2hdr/releases/tag/v1.1.0
 

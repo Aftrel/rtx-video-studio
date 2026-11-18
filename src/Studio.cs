@@ -50,6 +50,7 @@ sealed class StudioForm : Form {
     CancellationTokenSource? running;
     string? input,outputFile,outputDir;
     Media? media;
+    bool preferVsr=true,preferHdr=true,applyingSource;
     int selection;
     bool closeWhenDone;
 
@@ -110,6 +111,8 @@ sealed class StudioForm : Form {
         Row(Flow(render,cancel,open),9);Row(progress,10);Row(status,11);
         choose.Click+=async (_,_)=>{using var d=new OpenFileDialog{Title=T("Choose a video","选择视频"),Filter=T("Video","视频")+"|*.mp4;*.mkv;*.mov;*.m4v;*.avi;*.webm;*.ts|"+T("All files","所有文件")+"|*.*"};if(d.ShowDialog()==DialogResult.OK)await SelectFile(d.FileName);};
         location.Click+=(_,_)=>{using var d=new FolderBrowserDialog{InitialDirectory=outputDir??(input==null?"":Path.GetDirectoryName(input)??"")};if(d.ShowDialog()==DialogResult.OK){outputDir=d.SelectedPath;folder.Text=outputDir;}};
+        vsr.CheckedChanged+=(_,_)=>{if(!applyingSource)preferVsr=vsr.Checked;};
+        hdr.CheckedChanged+=(_,_)=>{if(!applyingSource)preferHdr=hdr.Checked;};
         foreach(var c in new[]{vsr,hdr,fg})c.CheckedChanged+=(_,_)=>RefreshTarget();
         render.Click+=async (_,_)=>await ProcessVideo(false);test.Click+=async (_,_)=>await ProcessVideo(true);
         cancel.Click+=(_,_)=>{running?.Cancel();cancel.Enabled=false;status.Text=T("Cancelling…","正在取消…");};
@@ -149,12 +152,25 @@ sealed class StudioForm : Form {
         quality.Items.Clear();quality.Items.AddRange(ExportQuality.All);quality.SelectedItem=preset;
         source.Text=selectedPath==null?T("Drop a video here or choose a file","拖入视频，或选择本地文件"):Path.GetFileName(selectedPath);
         folder.Text=outputDir??(input!=null?Path.GetDirectoryName(input):T("Save next to the source video","保存到原视频所在文件夹"));
+        ApplySourceOptions();
         if(media!=null) ShowMedia(media);
         status.Text=lastStatus?.Invoke()??"";
         RefreshTarget();
     }
+    void ApplySourceOptions() {
+        applyingSource=true;
+        try {
+            bool allowVsr=media?.CanUpscale!=false,allowHdr=media?.IsHdr!=true;
+            vsr.Enabled=allowVsr && running==null;hdr.Enabled=allowHdr && running==null;
+            vsr.Checked=allowVsr && preferVsr;hdr.Checked=allowHdr && preferHdr;
+            vsr.Text=!allowVsr?T("Already 4K+","已达 4K"):media?.IsHdr==true?T("10-bit upscale to 4K","10 位放大至 4K"):T("RTX VSR to 4K","RTX VSR 超分至 4K");
+            hdr.Text=allowHdr?"RTX Video HDR":T("Already HDR","已是 HDR");
+            RefreshLook();
+        } finally {applyingSource=false;}
+    }
     void ShowMedia(Media m) {
-        details.Text=$"{m.W} × {m.H}   ·   {m.Fps:0.###} fps   ·   {m.Duration:0.##} {T("s","秒")}   ·   {m.Transfer}";
+        var (width,height)=m.DisplaySize(false);
+        details.Text=$"{width} × {height}   ·   {m.Fps:0.###} fps   ·   {m.Duration:0.##} {T("s","秒")}   ·   {m.Transfer}";
     }
     void RefreshLook() {
         hdrLook.Enabled=hdr.Checked && running==null;
@@ -164,11 +180,11 @@ sealed class StudioForm : Form {
     }
     async Task SelectFile(string path) {
         int revision=++selection;selectedPath=path;lastStatus=null;media=null;input=null;outputFile=null;open.Enabled=false;
-        source.Text=Path.GetFileName(path);details.Text=T("Reading video…","正在读取…");status.Text="";progress.Value=0;RefreshTarget();
+        source.Text=Path.GetFileName(path);details.Text=T("Reading video…","正在读取…");status.Text="";progress.Value=0;ApplySourceOptions();RefreshTarget();
         try {
             var m=await Engine.Probe(path,CancellationToken.None);
             if(revision!=selection)return;
-            media=m;input=Path.GetFullPath(path);
+            media=m;input=Path.GetFullPath(path);ApplySourceOptions();
             ShowMedia(m);
             seconds.Maximum=Math.Max(0,(decimal)Math.Ceiling(m.Duration)-1);seconds.Value=0;
             folder.Text=outputDir??Path.GetDirectoryName(input);
@@ -178,8 +194,8 @@ sealed class StudioForm : Form {
     void RefreshTarget() {
         render.Enabled=test.Enabled=running==null && media!=null && (vsr.Checked||hdr.Checked||fg.Checked);
         if(media==null){target.Text="";return;}
-        var m=media;var scale=vsr.Checked?Math.Min(3840.0/m.W,2160.0/m.H):1;
-        target.Text=T("Output","输出")+$"   {Math.Round(m.W*scale/2)*2} × {Math.Round(m.H*scale/2)*2}   ·   {m.Fps*(fg.Checked?2:1):0.###} fps   ·   {(hdr.Checked?"HDR10":"SDR")}   ·   MP4";
+        var m=media;var (width,height)=m.DisplaySize(vsr.Checked);
+        target.Text=T("Output","输出")+$"   {width} × {height}   ·   {m.Fps*(fg.Checked?2:1):0.###} fps   ·   {(m.IsHdr?(m.Transfer=="arib-std-b67"?"HLG":"HDR"):(hdr.Checked?"HDR10":"SDR"))}   ·   MP4";
     }
     async Task ProcessVideo(bool preview) {
         if(input==null || running!=null)return;
@@ -196,7 +212,7 @@ sealed class StudioForm : Form {
         finally {
             running=null;cancel.Enabled=false;
             foreach(var c in new Control[]{choose,location,vsr,hdr,fg,quality,language,seconds})c.Enabled=true;
-            method.Enabled=fg.Checked;RefreshLook();RefreshTarget();if(closeWhenDone)Close();
+            method.Enabled=fg.Checked;ApplySourceOptions();RefreshTarget();if(closeWhenDone)Close();
         }
     }
 }

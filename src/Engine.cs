@@ -25,7 +25,25 @@ sealed record HdrLook(string Id, int Contrast, int Saturation, int MiddleGray, i
 record Options(bool Vsr, bool Hdr, bool Fg, bool Preview, double Start, bool Nvidia, ExportQuality Quality, HdrLook Look);
 record Media(int W, int H, string Rate, double Fps, double Duration, string Transfer, string Primaries,
              string Matrix, string Pixel, string Audio, string Sar, int Rotation, long Frames, double AudioOffset,
-             string Range, double VideoMbps);
+             string Range, double VideoMbps, bool DolbyVision, string FieldOrder) {
+    public bool IsHdr => DolbyVision || Transfer is "smpte2084" or "arib-std-b67";
+    public bool CanUpscale => Math.Max(W,H)<3840 && Math.Min(W,H)<2160;
+    public (int Width,int Height) OutputSize(bool upscale) {
+        if(!upscale || !CanUpscale) return (W,H);
+        double scale=Math.Min(3840.0/Math.Max(W,H),2160.0/Math.Min(W,H));
+        return ((int)Math.Round(W*scale/2)*2,(int)Math.Round(H*scale/2)*2);
+    }
+    public (int Width,int Height) DisplaySize(bool upscale) {
+        var (width,height)=OutputSize(upscale);
+        return Rotation%180==0?(width,height):(height,width);
+    }
+    public bool GpuColourSupported => IsHdr
+        ? !DolbyVision && Pixel=="yuv420p10le" && Range=="tv" && Primaries=="bt2020" && Matrix=="bt2020nc"
+        : (Pixel is "yuv420p" or "yuvj420p" or "yuv420p10le")
+          && (Matrix is "" or "unknown" or "bt709" or "bt470bg" or "smpte170m")
+          && (Primaries is "" or "unknown" or "bt709") && (Transfer is "" or "unknown" or "bt709" or "smpte170m")
+          && (Range is "" or "unknown" or "pc" or "tv");
+}
 record Result(string Path, Media Media);
 
 static class Engine {
@@ -76,7 +94,37 @@ static class Engine {
         return new((int)Number(Field(v,"width")), (int)Number(Field(v,"height")), rate, Fraction(rate), duration,
             Field(v,"color_transfer"),Field(v,"color_primaries"),Field(v,"color_space"),Field(v,"pix_fmt"),Field(audio,"codec_name"),
             Field(v,"sample_aspect_ratio","1:1"),rotation,(long)Number(Field(v,"nb_frames")),
-            Number(Field(audio,"start_time"))-Number(Field(v,"start_time")),Field(v,"color_range"),Number(Field(v,"bit_rate"))/1_000_000);
+            Number(Field(audio,"start_time"))-Number(Field(v,"start_time")),Field(v,"color_range"),Number(Field(v,"bit_rate"))/1_000_000,
+            side.ValueKind==JsonValueKind.Array && side.EnumerateArray().Any(x=>Field(x,"side_data_type").Contains("DOVI",StringComparison.OrdinalIgnoreCase)),Field(v,"field_order"));
+    }
+    static async Task<List<string>> HdrMetadataArgs(string input,CancellationToken token) {
+        using var probe=Spawn("ffprobe",["-v","error","-select_streams","V:0","-read_intervals","%+#24",
+            "-show_frames","-show_streams","-of","json",input],Bin,output:true);
+        using var stop=token.Register(()=>Kill(probe));
+        var errors=probe.StandardError.ReadToEndAsync();
+        var json=await probe.StandardOutput.ReadToEndAsync(token);
+        await probe.WaitForExitAsync(token);
+        if(probe.ExitCode!=0) throw new IOException(await errors);
+        using var doc=JsonDocument.Parse(json);
+        string? display=null,light=null;
+        foreach(var section in new[]{"streams","frames"}) {
+            if(!doc.RootElement.TryGetProperty(section,out var rows)) continue;
+            foreach(var row in rows.EnumerateArray()) {
+                if(!row.TryGetProperty("side_data_list",out var items))continue;
+                foreach(var data in items.EnumerateArray()){
+                    long Scale(string key,int scale)=>(long)Math.Round(Fraction(Field(data,key))*scale);
+                    string XY(string primary)=>$"({Scale(primary+"_x",50000)},{Scale(primary+"_y",50000)})";
+                    if(Field(data,"side_data_type")=="Mastering display metadata" && data.TryGetProperty("max_luminance",out _))
+                        display=$"G{XY("green")}B{XY("blue")}R{XY("red")}WP{XY("white_point")}L({Scale("max_luminance",10000)},{Scale("min_luminance",10000)})";
+                    if(Field(data,"side_data_type")=="Content light level metadata")
+                        light=Field(data,"max_content")+","+Field(data,"max_average");
+                }
+            }
+        }
+        var args=new List<string>();
+        if(display!=null)args.AddRange(["--master-display",display]);
+        if(light!=null)args.AddRange(["--max-cll",light]);
+        return args;
     }
     static string LosslessDll() {
         var steam = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam")?.GetValue("SteamPath") as string;
@@ -115,45 +163,67 @@ static class Engine {
         var gpuWorker=o.Nvidia?"vfg/vfg-gpu":"vfg/lsfg-gpu";
         var engine=o.Nvidia?"VFG":"LSFG";
         var losslessDll=o.Fg && !o.Nvidia ? LosslessDll() : null;
-        if (o.Fg && m.Matrix=="bt709" && m.Transfer=="bt709" && m.Primaries=="bt709" &&
-            m.Range=="tv" && m.Pixel=="yuv420p" && File.Exists(Path.Combine(Bin,gpuWorker+".exe"))) {
+        async Task InterpolateGpu(string source, double start, double duration, long expectedFrames) {
             var fastFile=Path.Combine(cwd,"stage.gpu.mp4");
+            var args=new List<string>{source,fastFile,F(start),F(duration),m.Rate};
+            if(losslessDll!=null) args.Add(losslessDll);
+            if(finalEncode) args.Add(F(o.Quality.Cq));
+            await Run(gpuWorker,args,cwd,log,token);
+            var stage=await Probe(fastFile,token);
+            if(stage.Frames<=0 || stage.W!=m.W || stage.H!=m.H || Math.Abs(stage.Fps-2*m.Fps)>.01 ||
+               Math.Abs(stage.Duration-length)>Math.Max(.16,1.1/m.Fps) || (expectedFrames>0 && stage.Frames!=2*expectedFrames))
+                throw new IOException("GPU output timing mismatch");
+            File.Move(fastFile,Path.Combine(cwd,"stage.mp4"));
+        }
+        if (o.Fg && m.GpuColourSupported && File.Exists(Path.Combine(Bin,gpuWorker+".exe"))) {
             try {
                 log(engine+"_GPU_START");
-                var gpuArgs=new List<string>{input,fastFile,F(o.Preview?o.Start:0),F(o.Preview?length:-1),m.Rate};
-                if(losslessDll!=null) gpuArgs.Add(losslessDll);
-                if(finalEncode) gpuArgs.Add(F(o.Quality.Cq));
-                await Run(gpuWorker,gpuArgs,cwd,log,token);
-                var stage=await Probe(fastFile,token);
-                if (stage.Frames<=0 || stage.W!=m.W || stage.H!=m.H || Math.Abs(stage.Fps-2*m.Fps)>.01 ||
-                    Math.Abs(stage.Duration-length)>1.1/m.Fps || (!o.Preview && m.Frames>0 && stage.Frames!=2*m.Frames))
-                    throw new IOException("GPU output timing mismatch");
-                File.Move(fastFile,Path.Combine(cwd,"stage.mp4"));
+                await InterpolateGpu(input,o.Preview?o.Start:0,o.Preview?length:-1,o.Preview?0:m.Frames);
                 return;
             } catch (Exception ex) when (!token.IsCancellationRequested &&
                     (ex is IOException || ex is System.ComponentModel.Win32Exception)) {
                 log(engine+"_GPU_FALLBACK "+ex.Message);
-                File.Delete(fastFile);
+                File.Delete(Path.Combine(cwd,"stage.gpu.mp4"));
             }
         }
+        if(o.Fg) log(engine+"_GPU_FALLBACK preparing compatible frames");
         var from = new List<string>{"-nostdin","-v","error"};
         if (o.Preview) from.AddRange(["-ss",F(o.Start)]);
-        from.AddRange(["-i",input,"-map","0:V:0","-an","-sn","-dn"]);
+        from.AddRange(["-noautorotate","-i",input,"-map","0:V:0","-an","-sn","-dn"]);
         if (o.Preview) from.AddRange(["-t",F(length)]);
-        var fps = "fps="+m.Rate;
+        var fps = (m.FieldOrder is "tt" or "bb" or "bt" or "tb" ? "bwdif=mode=send_frame:parity=auto:deint=all," : "")+"fps="+m.Rate;
         const string tags="setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709";
         var normal = "scale=in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,setsar=1,"+tags;
+        // Explicitly tagged primaries require a gamut conversion as well as a YUV matrix change.
+        string sourceMatrix=m.Matrix is "" or "unknown" ? (m.H<=576?"smpte170m":"bt709") : m.Matrix;
+        string sourcePrimaries=m.Primaries is "" or "unknown"?"bt709":m.Primaries;
+        string sourceTransfer=m.Transfer is "" or "unknown"?"bt709":m.Transfer;
+        string compatColour=sourcePrimaries=="bt709" && sourceTransfer is ("bt709" or "smpte170m") ? "" :
+            $"colorspace=all=bt709:ispace={sourceMatrix}:iprimaries={sourcePrimaries}:itrc={sourceTransfer}:range=tv,";
         var enc = new List<string>{"-c:v","hevc_nvenc"};
         if(finalEncode) enc.AddRange(["-preset","p5","-rc","vbr","-cq",F(o.Quality.Cq),"-b:v","0","-maxrate","240M"]);
         else enc.AddRange(["-preset","p3","-rc","constqp","-qp","8"]);
         enc.AddRange(["-bf","0","-pix_fmt","yuv420p","-colorspace","bt709","-color_primaries","bt709","-color_trc","bt709","-color_range","tv","stage.mp4"]);
+        if (m.IsHdr) {
+            var output=o.Fg?"normalized.mp4":"stage.mp4";
+            from.AddRange(["-vf",fps+",scale=in_range="+(m.Range=="pc"?"pc":"tv")+":out_range=tv,format=p010le",
+                "-c:v","hevc_nvenc","-preset","p3","-rc","constqp","-qp","8","-bf","0",
+                "-colorspace","bt2020nc","-color_primaries","bt2020","-color_trc",m.Transfer,"-color_range","tv",output]);
+            await Run("ffmpeg",from,cwd,log,token);
+            if(o.Fg) {
+                var normalized=Path.Combine(cwd,output);
+                var info=await Probe(normalized,token);
+                await InterpolateGpu(normalized,0,-1,info.Frames);
+            }
+            return;
+        }
         if (!o.Fg) {
-            from.AddRange(["-vf",fps+","+normal]); from.AddRange(enc);
+            from.AddRange(["-vf",fps+","+compatColour+normal]); from.AddRange(enc);
             await Run("ffmpeg",from,cwd,log,token); return;
         }
         var workerArgs = new List<string>{m.W.ToString(),m.H.ToString()};
         if (losslessDll!=null) workerArgs.Add(losslessDll);
-        from.AddRange(["-vf",fps+",scale=in_color_matrix=auto:out_range=pc,format=rgba","-f","rawvideo","pipe:1"]);
+        from.AddRange(["-vf",fps+","+compatColour+"scale=in_color_matrix=auto:out_range=pc,format=rgba","-f","rawvideo","pipe:1"]);
         using var decode = Spawn("ffmpeg",from,cwd,output:true);
         var processes = new List<Process>{decode};
         using var group = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -180,10 +250,16 @@ static class Engine {
     internal static async Task<Result> Render(string input, string destination, Options o,
         Action<string, double> update, CancellationToken token) {
         var m = await Probe(input,token);
+        o=o with {Vsr=o.Vsr && m.CanUpscale,Hdr=o.Hdr && !m.IsHdr};
         if (!(o.Vsr || o.Hdr || o.Fg)) throw new ArgumentException(T("Select at least one effect.","请至少选择一种处理效果"));
-        if (m.Transfer is "smpte2084" or "arib-std-b67" || m.Primaries is "bt2020" ||
-            m.Rotation%360!=0 || m.Sar is not ("1:1" or "N/A" or "") || (m.W|m.H)%2!=0)
-            throw new ArgumentException(T("Choose an SDR video with even dimensions, square pixels and no rotation metadata.","此版本支持偶数尺寸、方形像素的横向或纵向 SDR 视频，不支持旋转标记及 HDR 输入。"));
+        if(m.DolbyVision)
+            throw new ArgumentException(T("Dolby Vision export is unsupported.","暂不支持导出杜比视界片源。"));
+        if(!m.IsHdr && (m.Primaries=="bt2020" || m.Matrix=="bt2020nc") && m.Transfer is ("" or "unknown"))
+            throw new ArgumentException(T("This wide-gamut source has no transfer-function tag. Its HDR format cannot be determined.","广色域片源缺少传递函数标记，无法确定其 HDR 格式。"));
+        if(m.IsHdr && (m.Matrix is not ("bt2020nc" or "" or "unknown") || m.Primaries is not ("bt2020" or "" or "unknown")))
+            throw new ArgumentException(T("HDR export requires BT.2020 non-constant-luminance video.","HDR 导出需要使用 BT.2020 非恒定亮度矩阵的片源。"));
+        if (m.Rotation%90!=0 || m.Sar is not ("1:1" or "N/A" or "") || (m.W|m.H)%2!=0)
+            throw new ArgumentException(T("Choose a video with even dimensions, square pixels and a multiple of 90° for rotation.","请选择偶数尺寸、方形像素，旋转角度为 90° 整数倍的视频。"));
         if (m.Fps is < 1 or > 120 || m.Duration<=0) throw new ArgumentException(T("Could not determine a supported frame rate or duration.","无法确定可用的帧率或时长"));
         var length=o.Preview?Math.Min(5,m.Duration-o.Start):m.Duration;
         if(length<=0 || o.Start<0) throw new ArgumentException(T("The preview start time is outside the video.","预览起点超出视频范围"));
@@ -192,11 +268,11 @@ static class Engine {
         var num=long.Parse(parts[0])*(o.Fg?2:1);
         var den=parts.Length>1?long.Parse(parts[1]):1;
         var rate=$"{num}/{den}";
-        var scale=o.Vsr?Math.Min(3840.0/m.W,2160.0/m.H):1;
-        var width=(int)Math.Round(m.W*scale/2)*2; var height=(int)Math.Round(m.H*scale/2)*2;
-        if(o.Vsr && scale<1) throw new ArgumentException(T("This video exceeds 4K. Turn off upscaling.","输入已超过 4K 范围，请关闭超分。"));
-        var hdrLabel=o.Hdr ? (o.Look==HdrLook.Gentle?"_HDR10-Gentle":"_HDR10") : "";
-        var label=(o.Preview?T("_preview","_预览"):"")+$"_{width}x{height}_{F(Math.Round(fps,3))}fps"+hdrLabel+(o.Fg?(o.Nvidia?"_VFG":"_LSFG"):"");
+        var (width,height)=m.OutputSize(o.Vsr);
+        var (displayW,displayH)=m.DisplaySize(o.Vsr);
+        var hdrLabel=m.IsHdr ? (m.Transfer=="smpte2084"?"_HDR10":"_HLG") :
+            o.Hdr ? (o.Look==HdrLook.Gentle?"_HDR10-Gentle":"_HDR10") : "";
+        var label=(o.Preview?T("_preview","_预览"):"")+$"_{displayW}x{displayH}_{F(Math.Round(fps,3))}fps"+hdrLabel+(o.Fg?(o.Nvidia?"_VFG":"_LSFG"):"");
         Directory.CreateDirectory(destination);
         var cwd=Directory.CreateDirectory(Path.Combine(destination,".rtx-"+Guid.NewGuid().ToString("N"))).FullName;
         var logPath=Path.Combine(cwd,"job.log");
@@ -206,8 +282,13 @@ static class Engine {
         var fgName=fgEngine;
         void Log(string line) {
             lock(writer) writer.WriteLine(line);
-            if(line is "VFG_GPU_START" or "LSFG_GPU_START") fgName=fgEngine+T(" · GPU-memory path"," · 显存直通");
-            if(line.StartsWith("VFG_GPU_FALLBACK") || line.StartsWith("LSFG_GPU_FALLBACK")) fgName=fgEngine+T(" · compatibility mode"," · 兼容模式");
+            if(line is "VFG_GPU_START" or "LSFG_GPU_START") {
+                fgName=fgEngine+T(" · GPU-memory path"," · 显存直通");
+                update(fgName,0);
+            } else if(line.StartsWith("VFG_GPU_FALLBACK") || line.StartsWith("LSFG_GPU_FALLBACK")) {
+                fgName=fgEngine+T(" · compatibility mode"," · 兼容模式");
+                update(fgName,0);
+            }
             if((line.StartsWith("LSFG_FRAMES ") || line.StartsWith("VFG_FRAMES ")) && long.TryParse(line.AsSpan(line.IndexOf(' ')+1),out var count))
                 update(fgName+T(" · generating intermediate frames"," 正在生成中间帧"),Math.Min(.47,.47*count/(m.Fps*length)));
             if(stage==1 && Regex.Match(line,@"\]\s*(\d+) frames:") is {Success:true} hit)
@@ -220,32 +301,13 @@ static class Engine {
             var video="stage.mp4";
             bool softenHighlights=o.Hdr && o.Look==HdrLook.Gentle;
             if(softenHighlights) HighlightShoulder.WriteLut(cwd);
-            bool nativeSizeVsr=o.Vsr && width==m.W && height==m.H;
-            if(nativeSizeVsr) {
-                // NVEncC skips resize filters at 1:1. Apply RTX VSR explicitly and use its NVENC CQ path.
-                stage=1;update(T("Native-size RTX VSR · ","原尺寸 RTX VSR · ")+o.Quality.Label,.48);
-                video="enhanced.mp4";
-                var inputStage="stage.mp4";
-                if(softenHighlights) {
-                    // The native-size VSR worker has no LUT input. Shape the SDR signal before it reads the frames.
-                    inputStage="softened.mp4";
-                    await Run("encode/NVEncC64",["--avhw","-i","stage.mp4","-o",inputStage,"-c","hevc","--preset","P3",
-                        "--cqp","8","--bframes","0","--output-depth","10","--vpp-colorspace",HighlightShoulder.Filter,
-                        "--colormatrix","bt709","--colorprim","bt709","--transfer","bt709"],cwd,Log,token);
-                }
-                var args=new List<string>{inputStage,video,o.Hdr?"--vsr-hdr":"--vsr","--legacy","--backend","nvenc",
-                    "--codec","hevc","--quality",F(o.Quality.Cq),"--no-audio","--output-size",$"{width}x{height}",
-                    "--vsr-quality","4"};
-                if(o.Hdr) args.AddRange(["--contrast",F(o.Look.Contrast),"--saturation",F(o.Look.Saturation),
-                    "--middle-grey",F(o.Look.MiddleGray),"--max-lum",F(o.Look.PeakNits)]);
-                await Run("sdr2hdr_cli",args,cwd,Log,token);
-            } else if(o.Hdr || o.Vsr) {
+            if(o.Hdr || o.Vsr) {
                 stage=1;update(T("Encoding · ","正在编码 · ")+o.Quality.Label,.48);
                 video="enhanced.mp4";
                 var args=new List<string>{"--avhw","-i","stage.mp4","-o",video,"-c","hevc","--preset","P5",
                     "--qvbr",F(o.Quality.Cq),"--max-bitrate","240000","--bframes","0","--sar","1:1"};
                 if(softenHighlights) args.AddRange(["--vpp-colorspace",HighlightShoulder.Filter]);
-                if(o.Vsr) args.AddRange(["--output-res",$"{width}x{height}","--vpp-resize","algo=ngx-vsr,vsr-quality=4"]);
+                if(o.Vsr) args.AddRange(["--output-res",$"{width}x{height}","--vpp-resize",m.IsHdr?"algo=lanczos3":"algo=ngx-vsr,vsr-quality=4"]);
                 if(o.Hdr) {
                     var look=o.Look;
                     args.AddRange(["--vpp-ngx-truehdr",$"contrast={look.Contrast},saturation={look.Saturation},middlegray={look.MiddleGray},maxluminance={look.PeakNits}",
@@ -254,11 +316,15 @@ static class Engine {
                     // Preserve the historical Classic metadata. Gentle has no measured per-title MaxCLL/MaxFALL.
                     if(look==HdrLook.Classic) args.AddRange(["--max-cll","1000,500"]);
                 }
+                else if(m.IsHdr) {
+                    args.AddRange(["--output-depth","10","--colormatrix","bt2020nc","--colorprim","bt2020","--transfer",m.Transfer]);
+                    args.AddRange(await HdrMetadataArgs(input,token));
+                }
                 else args.AddRange(["--colormatrix","bt709","--colorprim","bt709","--transfer","bt709"]);
                 await Run("encode/NVEncC64",args,cwd,Log,token);
             }
             update(T("Muxing audio and verifying the output","正在写入原声并校验成片"),.97);
-            var mux=new List<string>{"-nostdin","-v","error","-i",video};
+            var mux=new List<string>{"-nostdin","-v","error","-display_rotation:v:0",m.Rotation.ToString(CultureInfo.InvariantCulture),"-i",video};
             if(m.Audio!="") {
                 var audioSeek=(o.Preview?o.Start:0)-m.AudioOffset;
                 if(audioSeek>0) mux.AddRange(["-ss",F(audioSeek)]);
@@ -272,14 +338,13 @@ static class Engine {
                 else mux.AddRange(["-c:a","aac","-b:a","320k"]);
             }
             mux.AddRange(["-video_track_timescale",num.ToString()]);
-            // The native-size encoder already writes CFR timestamps in display order, including B-frames.
-            if(!nativeSizeVsr) mux.AddRange(["-bsf:v",$"setts=pts=N*{den}:dts=N*{den}:duration={den}:time_base=1/{num}"]);
+            mux.AddRange(["-bsf:v",$"setts=pts=N*{den}:dts=N*{den}:duration={den}:time_base=1/{num}"]);
             mux.AddRange(["-t",F(intermediate.Frames/fps),"-movflags","+faststart","final.mp4"]);
             await Run("ffmpeg",mux,cwd,Log,token);
             var final=Path.Combine(cwd,"final.mp4");var info=await Probe(final,token);
             if(info.W!=width || info.H!=height || info.Frames!=intermediate.Frames || info.Frames<1 ||
-               Math.Abs(info.Duration-length)>Math.Max(.16,2/m.Fps) || Math.Abs(info.Fps-fps)>.01 ||
-               (m.Audio!="" && info.Audio=="") || (o.Hdr && (info.Transfer!="smpte2084" || info.Primaries!="bt2020" || !info.Pixel.Contains("10"))))
+               Math.Abs(info.Duration-length)>Math.Max(.16,2/m.Fps) || Math.Abs(info.Fps-fps)>.01 || (info.Rotation-m.Rotation)%360!=0 ||
+               (m.Audio!="" && info.Audio=="") || ((o.Hdr || m.IsHdr) && (info.Transfer!=(m.IsHdr?m.Transfer:"smpte2084") || info.Primaries!="bt2020" || !info.Pixel.Contains("10"))))
                  throw new IOException(T("Output verification failed","输出校验失败")+$" · {info.W}×{info.H} · {info.Frames}/{intermediate.Frames} · {F(info.Duration)} s");
             token.ThrowIfCancellationRequested();
             var stem=Path.GetFileNameWithoutExtension(input)+label;
